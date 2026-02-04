@@ -1,4 +1,4 @@
-# OpenEVT — SUV Offroad Sim
+# OpenEVT — Electronic Variable Transmission Simulator
 
 ## Run
 
