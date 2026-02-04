@@ -1,0 +1,512 @@
+newmtl Wheelsdually016wheelsdually016h2protector1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.666667 0.666667 0.666667 
+
+d 1
+
+Ns 255
+
+map_Ka Wheelsdually016wheelsdually016h2protector1_diff.png
+map_Kd Wheelsdually016wheelsdually016h2protector1_diff.png
+map_d Wheelsdually016wheelsdually016h2protector1_diff.png
+
+newmtl Reference11refreference11refgmc89gauges1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference11refreference11refgmc89gauges1_diff.png
+map_Kd Reference11refreference11refgmc89gauges1_diff.png
+map_d Reference11refreference11refgmc89gauges1_diff.png
+
+newmtl Reference4ref003reference4ref003blackdull1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.396078 0.396078 0.396078 
+
+d 1
+
+Ns 0
+
+map_Ka Reference4ref003reference4ref003blackdull1_diff.png
+map_Kd Reference4ref003reference4ref003blackdull1_diff.png
+map_d Reference4ref003reference4ref003blackdull1_diff.png
+
+newmtl Ln1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Ln1_diff.png
+map_Kd Ln1_diff.png
+map_d Ln1_diff.png
+
+newmtl Wheelsdually014wheelsdually014blackdull1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.666667 0.666667 0.666667 
+
+d 1
+
+Ns 255
+
+map_Ka Reference4ref003reference4ref003blackdull1_diff.png
+map_Kd Reference4ref003reference4ref003blackdull1_diff.png
+map_d Reference4ref003reference4ref003blackdull1_diff.png
+
+newmtl Plate2Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.666667 0.666667 0.666667 
+
+d 1
+
+Ns 255
+
+map_Ka Plate2_diff.png
+map_Kd Plate2_diff.png
+map_d Plate2_diff.png
+
+newmtl Reference13ref003reference13ref003gmc89inside1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference13ref003reference13ref003gmc89inside1_diff.png
+map_Kd Reference13ref003reference13ref003gmc89inside1_diff.png
+map_d Reference13ref003reference13ref003gmc89inside1_diff.png
+
+newmtl Reference14ref002reference14ref002gmc89chassis1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference14ref002reference14ref002gmc89chassis1_diff.png
+map_Kd Reference14ref002reference14ref002gmc89chassis1_diff.png
+map_d Reference14ref002reference14ref002gmc89chassis1_diff.png
+
+newmtl Reference13refreference13refgmc89interior1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference13refreference13refgmc89interior1_diff.png
+map_Kd Reference13refreference13refgmc89interior1_diff.png
+map_d Reference13refreference13refgmc89interior1_diff.png
+
+newmtl Reference14ref001reference14ref001chrome1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference14ref001reference14ref001chrome1_diff.png
+map_Kd Reference14ref001reference14ref001chrome1_diff.png
+map_d Reference14ref001reference14ref001chrome1_diff.png
+
+newmtl Referenceref004referenceref004sub89cexterior1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.396078 0.396078 0.396078 
+
+d 1
+
+Ns 0
+
+map_Ka Grillechevy003grillechevy003sub89cexterior1_diff.png
+map_Kd Grillechevy003grillechevy003sub89cexterior1_diff.png
+map_d Grillechevy003grillechevy003sub89cexterior1_diff.png
+
+newmtl Reference14ref003reference14ref003gmc89panels1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference14ref003reference14ref003gmc89panels1_diff.png
+map_Kd Reference14ref003reference14ref003gmc89panels1_diff.png
+map_d Reference14ref003reference14ref003gmc89panels1_diff.png
+
+newmtl Reference14refreference14refgmc89steer1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference14refreference14refgmc89steer1_diff.png
+map_Kd Reference14refreference14refgmc89steer1_diff.png
+map_d Reference14refreference14refgmc89steer1_diff.png
+
+newmtl Grillechevygrillechevygmc89parts1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Grillechevygrillechevygmc89parts1_diff.png
+map_Kd Grillechevygrillechevygmc89parts1_diff.png
+map_d Grillechevygrillechevygmc89parts1_diff.png
+
+newmtl Reference4ref004reference4ref004chrome1Mtl
+Material Color
+Ka 0.124741 0.113921 0.121986
+Kd 0.124741 0.113921 0.121986
+Ks 0.010762 0.00982847 0.0105243 
+
+d 1
+
+Ns 255
+
+map_Ns Reference4ref004reference4ref004chrome1_spec.png
+
+newmtl Bumpers001bumpers001paintmetallic1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0322335 0.0318 0.03311 
+
+d 1
+
+Ns 255
+
+map_Ns Reference4ref004reference4ref004chrome1_spec.png
+
+newmtl Reference4ref002reference4ref002paintmetallic1Mtl
+Material Color
+Ka 0.618686 0.618686 0.618686
+Kd 0.618686 0.618686 0.618686
+Ks 0.0533768 0.0533768 0.0533768 
+
+d 1
+
+Ns 255
+
+map_Ns Reference4ref004reference4ref004chrome1_spec.png
+
+newmtl Mudflapsmudflapsblackdull1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference4ref003reference4ref003blackdull1_diff.png
+map_Kd Reference4ref003reference4ref003blackdull1_diff.png
+map_d Reference4ref003reference4ref003blackdull1_diff.png
+
+newmtl Plate1Mtl
+Material Color
+Ka 0.940601 0.940601 0.940601
+Kd 0.940601 0.940601 0.940601
+Ks 0.627067 0.627067 0.627067 
+
+d 1
+
+Ns 255
+
+map_Ka Plate1_diff.png
+map_Kd Plate1_diff.png
+map_d Plate1_diff.png
+
+map_Bump Plate1_nmap.png
+
+map_Ns Plate1_spec.png
+
+newmtl Reference7ref001reference7ref001gmc89parts1Mtl
+Material Color
+Ka 0.00258583 0.00258583 0.00258583
+Kd 0.00258583 0.00258583 0.00258583
+Ks 0.00102419 0.00102419 0.00102419 
+
+d 1
+
+Ns 0
+
+newmtl Referenceref007referenceref007gmc89gyear1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Referenceref007referenceref007gmc89gyear1_diff.png
+map_Kd Referenceref007referenceref007gmc89gyear1_diff.png
+map_d Referenceref007referenceref007gmc89gyear1_diff.png
+
+newmtl Grillechevy003grillechevy003sub89cexterior1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Grillechevy003grillechevy003sub89cexterior1_diff.png
+map_Kd Grillechevy003grillechevy003sub89cexterior1_diff.png
+map_d Grillechevy003grillechevy003sub89cexterior1_diff.png
+
+newmtl Hitchhitchgmc89extras1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Hitchhitchgmc89extras1_diff.png
+map_Kd Hitchhitchgmc89extras1_diff.png
+map_d Hitchhitchgmc89extras1_diff.png
+
+newmtl Grillechevy001grillechevy001paintmetallic1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Grillechevy001grillechevy001paintmetallic1_diff.png
+map_Kd Grillechevy001grillechevy001paintmetallic1_diff.png
+map_d Grillechevy001grillechevy001paintmetallic1_diff.png
+
+newmtl Driverdoorreardriverdoorreargmc89exterior1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Driverdoorreardriverdoorreargmc89exterior1_diff.png
+map_Kd Driverdoorreardriverdoorreargmc89exterior1_diff.png
+map_d Driverdoorreardriverdoorreargmc89exterior1_diff.png
+
+newmtl Reference10ref004reference10ref004gmc89l051Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference10ref004reference10ref004gmc89l051_diff.png
+map_Kd Reference10ref004reference10ref004gmc89l051_diff.png
+map_d Reference10ref004reference10ref004gmc89l051_diff.png
+
+newmtl Reference9refreference9refblackshiny1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Reference9refreference9refblackshiny1_diff.png
+map_Kd Reference9refreference9refblackshiny1_diff.png
+map_d Reference9refreference9refblackshiny1_diff.png
+
+newmtl Referenceref009referenceref009gmc89red1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Referenceref009referenceref009gmc89red1_diff.png
+map_Kd Referenceref009referenceref009gmc89red1_diff.png
+map_d Referenceref009referenceref009gmc89red1_diff.png
+
+newmtl Reference7ref002reference7ref002glass1Mtl
+Material Color
+Ka 0.00258583 0.00258583 0.00258583
+Kd 0.00258583 0.00258583 0.00258583
+Ks 0.000223091 0.000223091 0.000223091 
+
+d 0.501961
+
+Ns 255
+
+map_Ns Reference4ref004reference4ref004chrome1_spec.png
+
+newmtl Chevy004chevy004sub89cpanels1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Chevy004chevy004sub89cpanels1_diff.png
+map_Kd Chevy004chevy004sub89cpanels1_diff.png
+map_d Chevy004chevy004sub89cpanels1_diff.png
+
+newmtl Airdeflectorblackairdeflectorblackblackshiny1Mtl
+Material Color
+Ka 0.124741 0.113921 0.121986
+Kd 0.124741 0.113921 0.121986
+Ks 0.0494072 0.0451216 0.0483159 
+
+d 1
+
+Ns 0
+
+newmtl Wheelsdually015wheelsdually015h2tire1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.666667 0.666667 0.666667 
+
+d 1
+
+Ns 255
+
+map_Ka Wheelsdually015wheelsdually015h2tire1_diff.png
+map_Kd Wheelsdually015wheelsdually015h2tire1_diff.png
+map_d Wheelsdually015wheelsdually015h2tire1_diff.png
+
+newmtl Wheelsdually004wheelsdually004gmc89wheel1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.666667 0.666667 0.666667 
+
+d 1
+
+Ns 255
+
+map_Ka Wheelsdually004wheelsdually004gmc89wheel1_diff.png
+map_Kd Wheelsdually004wheelsdually004gmc89wheel1_diff.png
+map_d Wheelsdually004wheelsdually004gmc89wheel1_diff.png
+
+newmtl Passengerdoorpassengerdoorexterior1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0234425 0.0231273 0.02408 
+
+d 1
+
+Ns 0
+
+newmtl Chevy005chevy005chrome1Mtl
+Material Color
+Ka 0.103634 0.108711 0.14198
+Kd 0.103634 0.108711 0.14198
+Ks 0.0410472 0.0430581 0.0562353 
+
+d 1
+
+Ns 0
+
+newmtl Chevy001chevy001sub89cexterior1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.666667 0.666667 0.666667 
+
+d 1
+
+Ns 255
+
+map_Ka Grillechevy003grillechevy003sub89cexterior1_diff.png
+map_Kd Grillechevy003grillechevy003sub89cexterior1_diff.png
+map_d Grillechevy003grillechevy003sub89cexterior1_diff.png
+
+newmtl Chevy003chevy003gmc89parts1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.666667 0.666667 0.666667 
+
+d 1
+
+Ns 255
+
+map_Ka Grillechevygrillechevygmc89parts1_diff.png
+map_Kd Grillechevygrillechevygmc89parts1_diff.png
+map_d Grillechevygrillechevygmc89parts1_diff.png
+
+newmtl Chevychevysub89csteer1Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Chevychevysub89csteer1_diff.png
+map_Kd Chevychevysub89csteer1_diff.png
+map_d Chevychevysub89csteer1_diff.png
+
