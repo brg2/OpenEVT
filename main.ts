@@ -1,16 +1,20 @@
-import * as THREE from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import Stats from 'stats.js';
-import GUI from 'lil-gui';
-import seedrandom from 'seedrandom';
-import { createNoise2D } from 'simplex-noise';
+import * as THREE from "three";
+import { Sky } from "three/examples/jsm/objects/Sky.js";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import Stats from "stats.js";
+import GUI from "lil-gui";
+import seedrandom from "seedrandom";
+import { createNoise2D } from "simplex-noise";
 
-import * as CANNON from 'cannon-es';
+import * as CANNON from "cannon-es";
 
-function loadObjWithMtl(basePath: string, objFile: string, mtlFile: string): Promise<THREE.Group> {
+function loadObjWithMtl(
+  basePath: string,
+  objFile: string,
+  mtlFile: string,
+): Promise<THREE.Group> {
   return new Promise((resolve, reject) => {
     const mtlLoader = new MTLLoader();
     mtlLoader.setPath(basePath);
@@ -21,10 +25,15 @@ function loadObjWithMtl(basePath: string, objFile: string, mtlFile: string): Pro
         const objLoader = new OBJLoader();
         objLoader.setMaterials(materials);
         objLoader.setPath(basePath);
-        objLoader.load(objFile, (obj) => resolve(obj), undefined, (err) => reject(err));
+        objLoader.load(
+          objFile,
+          (obj) => resolve(obj),
+          undefined,
+          (err) => reject(err),
+        );
       },
       undefined,
-      (err) => reject(err)
+      (err) => reject(err),
     );
   });
 }
@@ -35,7 +44,10 @@ function setModelShadowsAndColorSpace(model: THREE.Object3D) {
     if ((mesh as any).isMesh) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      const mat = mesh.material as unknown as THREE.Material | THREE.Material[] | undefined;
+      const mat = mesh.material as unknown as
+        | THREE.Material
+        | THREE.Material[]
+        | undefined;
       const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
       for (const m of mats) {
         const anyM = m as any;
@@ -49,15 +61,19 @@ function setModelShadowsAndColorSpace(model: THREE.Object3D) {
 }
 
 function sanitizeObjMaterials(model: THREE.Object3D) {
-  const isAllowedTransparent = (name: string) => /(glass|window|windshield|lens|light)/i.test(name);
+  const isAllowedTransparent = (name: string) =>
+    /(glass|window|windshield|lens|light)/i.test(name);
   model.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!(mesh as any).isMesh) return;
-    const mat = mesh.material as unknown as THREE.Material | THREE.Material[] | undefined;
+    const mat = mesh.material as unknown as
+      | THREE.Material
+      | THREE.Material[]
+      | undefined;
     const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
     for (const m of mats) {
       const anyM = m as any;
-      const name = `${anyM?.name ?? ''} ${mesh.name ?? ''}`.trim();
+      const name = `${anyM?.name ?? ""} ${mesh.name ?? ""}`.trim();
       const allow = isAllowedTransparent(name);
 
       // Many MTL exports incorrectly provide `map_d` for every material (often the diffuse texture),
@@ -70,18 +86,23 @@ function sanitizeObjMaterials(model: THREE.Object3D) {
         anyM.depthWrite = true;
       } else {
         anyM.transparent = true;
-        anyM.opacity = typeof anyM.opacity === 'number' ? Math.min(anyM.opacity, 0.45) : 0.35;
+        anyM.opacity =
+          typeof anyM.opacity === "number"
+            ? Math.min(anyM.opacity, 0.45)
+            : 0.35;
         anyM.depthWrite = false;
         anyM.side = THREE.DoubleSide;
       }
-      if (typeof anyM.needsUpdate !== 'undefined') anyM.needsUpdate = true;
+      if (typeof anyM.needsUpdate !== "undefined") anyM.needsUpdate = true;
     }
   });
 }
 
 type WheelIndex = 0 | 1 | 2 | 3; // FL, FR, RL, RR
 
-function collectWheelCandidateMeshesFromObj(model: THREE.Object3D): THREE.Mesh[] {
+function collectWheelCandidateMeshesFromObj(
+  model: THREE.Object3D,
+): THREE.Mesh[] {
   const matchRe = /(wheel|tire|tyre|rim)/i;
   const candidates: THREE.Mesh[] = [];
   model.updateWorldMatrix(true, true);
@@ -97,17 +118,19 @@ function collectWheelCandidateMeshesFromObj(model: THREE.Object3D): THREE.Mesh[]
     const mesh = o as THREE.Mesh;
     if (!(mesh as any).isMesh) return;
 
-    const name = mesh.name || '';
-    let matName = '';
+    const name = mesh.name || "";
+    let matName = "";
     const mat = mesh.material as any;
-    if (Array.isArray(mat)) matName = mat.map((m) => m?.name ?? '').join(' ');
-    else matName = mat?.name ?? '';
+    if (Array.isArray(mat)) matName = mat.map((m) => m?.name ?? "").join(" ");
+    else matName = mat?.name ?? "";
     if (!(matchRe.test(name) || matchRe.test(matName))) return;
 
     // Filter out interior steering wheel / cabin bits: wheels are low and near the four corners.
     const p = mesh.getWorldPosition(tmp);
-    const cornerish = (Math.abs(p.x - center.x) > size.x * 0.22) || (Math.abs(p.z - center.z) > size.z * 0.22);
-    const low = p.y < (center.y - size.y * 0.05);
+    const cornerish =
+      Math.abs(p.x - center.x) > size.x * 0.22 ||
+      Math.abs(p.z - center.z) > size.z * 0.22;
+    const low = p.y < center.y - size.y * 0.05;
     if (!cornerish || !low) return;
 
     candidates.push(mesh);
@@ -115,20 +138,33 @@ function collectWheelCandidateMeshesFromObj(model: THREE.Object3D): THREE.Mesh[]
   return candidates;
 }
 
-function buildWheelTemplateFromCluster(meshes: THREE.Mesh[], clusterCenterWorld: THREE.Vector3, wheelRadiusMeters: number, wheelWidthMeters: number): THREE.Group {
-  const invCenter = new THREE.Matrix4().makeTranslation(-clusterCenterWorld.x, -clusterCenterWorld.y, -clusterCenterWorld.z);
+function buildWheelTemplateFromCluster(
+  meshes: THREE.Mesh[],
+  clusterCenterWorld: THREE.Vector3,
+  wheelRadiusMeters: number,
+  wheelWidthMeters: number,
+): THREE.Group {
+  const invCenter = new THREE.Matrix4().makeTranslation(
+    -clusterCenterWorld.x,
+    -clusterCenterWorld.y,
+    -clusterCenterWorld.z,
+  );
   const template = new THREE.Group();
 
   for (const src of meshes) {
-    const srcGeo = (src.geometry as THREE.BufferGeometry | undefined);
+    const srcGeo = src.geometry as THREE.BufferGeometry | undefined;
     if (!srcGeo) continue;
     const geo = srcGeo.clone();
-    const rel = new THREE.Matrix4().multiplyMatrices(invCenter, src.matrixWorld);
+    const rel = new THREE.Matrix4().multiplyMatrices(
+      invCenter,
+      src.matrixWorld,
+    );
     geo.applyMatrix4(rel);
 
     const srcMat = src.material as any;
     let mat: any;
-    if (Array.isArray(srcMat)) mat = srcMat.map((m: any) => (m?.clone ? m.clone() : m));
+    if (Array.isArray(srcMat))
+      mat = srcMat.map((m: any) => (m?.clone ? m.clone() : m));
     else mat = srcMat?.clone ? srcMat.clone() : srcMat;
 
     const mesh = new THREE.Mesh(geo, mat);
@@ -149,13 +185,13 @@ function buildWheelTemplateFromCluster(meshes: THREE.Mesh[], clusterCenterWorld:
   const box0 = new THREE.Box3().setFromObject(template);
   const size0 = new THREE.Vector3();
   box0.getSize(size0);
-  const widthAxis = ((): 'x' | 'y' | 'z' => {
-    if (size0.x <= size0.y && size0.x <= size0.z) return 'x';
-    if (size0.y <= size0.x && size0.y <= size0.z) return 'y';
-    return 'z';
+  const widthAxis = ((): "x" | "y" | "z" => {
+    if (size0.x <= size0.y && size0.x <= size0.z) return "x";
+    if (size0.y <= size0.x && size0.y <= size0.z) return "y";
+    return "z";
   })();
-  if (widthAxis === 'z') template.rotation.y = Math.PI / 2;
-  if (widthAxis === 'y') template.rotation.z = Math.PI / 2;
+  if (widthAxis === "z") template.rotation.y = Math.PI / 2;
+  if (widthAxis === "y") template.rotation.z = Math.PI / 2;
 
   // Scale to match our physics wheel radius/width (independent width vs radius).
   template.updateWorldMatrix(true, true);
@@ -163,14 +199,19 @@ function buildWheelTemplateFromCluster(meshes: THREE.Mesh[], clusterCenterWorld:
   const size1 = new THREE.Vector3();
   box1.getSize(size1);
   const currentDiameter = Math.max(size1.y, size1.z);
-  const scaleRadial = currentDiameter > 1e-6 ? ((2 * wheelRadiusMeters) / currentDiameter) : 1;
-  const scaleWidth = size1.x > 1e-6 ? (wheelWidthMeters / size1.x) : 1;
+  const scaleRadial =
+    currentDiameter > 1e-6 ? (2 * wheelRadiusMeters) / currentDiameter : 1;
+  const scaleWidth = size1.x > 1e-6 ? wheelWidthMeters / size1.x : 1;
   template.scale.set(scaleWidth, scaleRadial, scaleRadial);
 
   return template;
 }
 
-function extractWheelTemplatesFromObj(model: THREE.Object3D, wheelRadiusMeters: number, wheelWidthMeters: number): Partial<Record<WheelIndex, THREE.Group>> {
+function extractWheelTemplatesFromObj(
+  model: THREE.Object3D,
+  wheelRadiusMeters: number,
+  wheelWidthMeters: number,
+): Partial<Record<WheelIndex, THREE.Group>> {
   const candidates = collectWheelCandidateMeshesFromObj(model);
   if (candidates.length === 0) return {};
 
@@ -178,7 +219,10 @@ function extractWheelTemplatesFromObj(model: THREE.Object3D, wheelRadiusMeters: 
   const tmp = new THREE.Vector3();
   const points = candidates.map((m) => m.getWorldPosition(tmp.clone()));
 
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  let minX = Infinity,
+    maxX = -Infinity,
+    minZ = Infinity,
+    maxZ = -Infinity;
   for (const p of points) {
     minX = Math.min(minX, p.x);
     maxX = Math.max(maxX, p.x);
@@ -204,7 +248,7 @@ function extractWheelTemplatesFromObj(model: THREE.Object3D, wheelRadiusMeters: 
     pickClosest(minX, maxZ), // FL-ish
     pickClosest(maxX, maxZ), // FR-ish
     pickClosest(minX, minZ), // RL-ish
-    pickClosest(maxX, minZ)  // RR-ish
+    pickClosest(maxX, minZ), // RR-ish
   ];
 
   const assign: number[] = new Array(points.length).fill(0);
@@ -225,7 +269,12 @@ function extractWheelTemplatesFromObj(model: THREE.Object3D, wheelRadiusMeters: 
       assign[i] = bestK;
     }
     // Update
-    const sum = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+    const sum = [
+      new THREE.Vector3(),
+      new THREE.Vector3(),
+      new THREE.Vector3(),
+      new THREE.Vector3(),
+    ];
     const count = [0, 0, 0, 0];
     for (let i = 0; i < points.length; i++) {
       sum[assign[i]].add(points[i]);
@@ -237,7 +286,8 @@ function extractWheelTemplatesFromObj(model: THREE.Object3D, wheelRadiusMeters: 
   }
 
   const clusterMeshes: THREE.Mesh[][] = [[], [], [], []];
-  for (let i = 0; i < candidates.length; i++) clusterMeshes[assign[i]].push(candidates[i]);
+  for (let i = 0; i < candidates.length; i++)
+    clusterMeshes[assign[i]].push(candidates[i]);
 
   const out: Partial<Record<WheelIndex, THREE.Group>> = {};
   for (let k = 0; k < 4; k++) {
@@ -246,13 +296,22 @@ function extractWheelTemplatesFromObj(model: THREE.Object3D, wheelRadiusMeters: 
     const p = centers[k];
     const isFront = p.z >= (minZ + maxZ) * 0.5;
     const isLeft = p.x <= (minX + maxX) * 0.5;
-    const idx: WheelIndex = (isFront ? (isLeft ? 0 : 1) : (isLeft ? 2 : 3)) as WheelIndex;
-    out[idx] = buildWheelTemplateFromCluster(clusterMeshes[k], centers[k], wheelRadiusMeters, wheelWidthMeters);
+    const idx: WheelIndex = (
+      isFront ? (isLeft ? 0 : 1) : isLeft ? 2 : 3
+    ) as WheelIndex;
+    out[idx] = buildWheelTemplateFromCluster(
+      clusterMeshes[k],
+      centers[k],
+      wheelRadiusMeters,
+      wheelWidthMeters,
+    );
   }
   return out;
 }
 
-function applyWheelTemplatesToVehicle(templates: Partial<Record<WheelIndex, THREE.Object3D>>) {
+function applyWheelTemplatesToVehicle(
+  templates: Partial<Record<WheelIndex, THREE.Object3D>>,
+) {
   const ud = vehicleGroup.userData as any;
   const roots = ud.wheelRoots as THREE.Object3D[] | undefined;
   const procedural = ud.proceduralWheelVisuals as THREE.Object3D[] | undefined;
@@ -279,7 +338,12 @@ function applyWheelTemplatesToVehicle(templates: Partial<Record<WheelIndex, THRE
   }
 }
 
-function fitCenterAndPlaceOnRestGroundY(model: THREE.Object3D, targetLengthZ: number, restGroundYLocal: number, yawRadians = Math.PI) {
+function fitCenterAndPlaceOnRestGroundY(
+  model: THREE.Object3D,
+  targetLengthZ: number,
+  restGroundYLocal: number,
+  yawRadians = Math.PI,
+) {
   // First, apply a likely forward-direction correction (many OBJ exports face -Z).
   model.rotation.set(0, yawRadians, 0);
 
@@ -298,13 +362,13 @@ function fitCenterAndPlaceOnRestGroundY(model: THREE.Object3D, targetLengthZ: nu
   box.getCenter(center);
   model.position.sub(center);
   const box2 = new THREE.Box3().setFromObject(model);
-  model.position.y += (restGroundYLocal - box2.min.y);
+  model.position.y += restGroundYLocal - box2.min.y;
 }
 
 type ChunkKey = string;
 
-const canvas = document.querySelector<HTMLCanvasElement>('#c');
-if (!canvas) throw new Error('Missing canvas #c');
+const canvas = document.querySelector<HTMLCanvasElement>("#c");
+if (!canvas) throw new Error("Missing canvas #c");
 
 // ---------- Render setup ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -325,7 +389,12 @@ scene.background = fogColor;
 const fog = new THREE.Fog(fogColor, 80, 520);
 scene.fog = fog;
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 6000);
+const camera = new THREE.PerspectiveCamera(
+  60,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  6000,
+);
 camera.position.set(0, 6, 14);
 
 // Sky + Sun
@@ -336,15 +405,15 @@ scene.add(sky);
 
 const sun = new THREE.Vector3();
 const skyUniforms = sky.material.uniforms;
-skyUniforms['turbidity'].value = 6;
-skyUniforms['rayleigh'].value = 2;
-skyUniforms['mieCoefficient'].value = 0.005;
-skyUniforms['mieDirectionalG'].value = 0.8;
+skyUniforms["turbidity"].value = 6;
+skyUniforms["rayleigh"].value = 2;
+skyUniforms["mieCoefficient"].value = 0.005;
+skyUniforms["mieDirectionalG"].value = 0.8;
 
 // Sample the rendered sky color near the horizon and use it for fog/background.
 const skySampleRT = new THREE.WebGLRenderTarget(1, 1, {
   depthBuffer: false,
-  stencilBuffer: false
+  stencilBuffer: false,
 });
 const skySampleCam = new THREE.PerspectiveCamera(60, 1, 0.1, 10000);
 skySampleCam.position.set(0, 0, 0);
@@ -364,7 +433,11 @@ function syncFogToSkyColor(hide: THREE.Object3D[] = []) {
   for (let i = 0; i < hide.length; i++) hide[i].visible = prevVis[i];
 
   // `readRenderTargetPixels` yields 0-255 bytes; treat as linear-ish for our fog/background.
-  fogColor.setRGB(skySamplePx[0] / 255, skySamplePx[1] / 255, skySamplePx[2] / 255);
+  fogColor.setRGB(
+    skySamplePx[0] / 255,
+    skySamplePx[1] / 255,
+    skySamplePx[2] / 255,
+  );
   fog.color.copy(fogColor);
 }
 
@@ -372,7 +445,7 @@ function setSun(elevationDeg: number, azimuthDeg: number) {
   const phi = THREE.MathUtils.degToRad(90 - elevationDeg);
   const theta = THREE.MathUtils.degToRad(azimuthDeg);
   sun.setFromSphericalCoords(1, phi, theta);
-  sky.material.uniforms['sunPosition'].value.copy(sun);
+  sky.material.uniforms["sunPosition"].value.copy(sun);
 }
 
 setSun(35, 135);
@@ -399,47 +472,47 @@ scene.add(dirLight);
 
 // ---------- Physics setup ----------
 const world = new CANNON.World({
-  gravity: new CANNON.Vec3(0, -14.5, 0)
+  gravity: new CANNON.Vec3(0, -14.5, 0),
 });
 world.allowSleep = true;
 world.broadphase = new CANNON.SAPBroadphase(world);
 world.defaultContactMaterial.friction = 0.6;
 
-const groundMaterial = new CANNON.Material('ground');
-const tireMaterial = new CANNON.Material('tire');
+const groundMaterial = new CANNON.Material("ground");
+const tireMaterial = new CANNON.Material("tire");
 const tireGround = new CANNON.ContactMaterial(tireMaterial, groundMaterial, {
   friction: 0.8,
-  restitution: 0.0
+  restitution: 0.0,
 });
 world.addContactMaterial(tireGround);
 
 // ---------- Procedural terrain (infinite tiled chunks) ----------
 function getSeedString() {
-  const fromUrl = new URLSearchParams(window.location.search).get('seed');
+  const fromUrl = new URLSearchParams(window.location.search).get("seed");
   if (fromUrl && fromUrl.trim().length > 0) return fromUrl.trim();
   const buf = new Uint32Array(4);
   crypto.getRandomValues(buf);
   return Array.from(buf)
-    .map((n) => n.toString(16).padStart(8, '0'))
-    .join('');
+    .map((n) => n.toString(16).padStart(8, "0"))
+    .join("");
 }
 
-const hudEl = document.querySelector<HTMLDivElement>('#hud');
-const hintEl = document.querySelector<HTMLDivElement>('#hud .hint');
-const baseHintText = hintEl?.textContent ?? '';
+const hudEl = document.querySelector<HTMLDivElement>("#hud");
+const hintEl = document.querySelector<HTMLDivElement>("#hud .hint");
+const baseHintText = hintEl?.textContent ?? "";
 
-const hudReadout = document.createElement('div');
-hudReadout.style.marginTop = '6px';
-hudReadout.style.fontSize = '12px';
-hudReadout.style.opacity = '0.9';
-hudReadout.textContent = 'gear: 1 • rpm: 650';
+const hudReadout = document.createElement("div");
+hudReadout.style.marginTop = "6px";
+hudReadout.style.fontSize = "12px";
+hudReadout.style.opacity = "0.9";
+hudReadout.textContent = "gear: 1 • rpm: 650";
 hudEl?.appendChild(hudReadout);
 
-const roadDebugEl = document.createElement('div');
-roadDebugEl.style.marginTop = '2px';
-roadDebugEl.style.fontSize = '12px';
-roadDebugEl.style.opacity = '0.9';
-roadDebugEl.textContent = 'road: (init)';
+const roadDebugEl = document.createElement("div");
+roadDebugEl.style.marginTop = "2px";
+roadDebugEl.style.fontSize = "12px";
+roadDebugEl.style.opacity = "0.9";
+roadDebugEl.textContent = "road: (init)";
 hudEl?.appendChild(roadDebugEl);
 
 let seed = getSeedString();
@@ -465,7 +538,7 @@ function reseedTerrain(nextSeed?: string) {
     obj.traverse((child) => {
       const mesh = child as THREE.Mesh;
       const geo = (mesh as any).geometry as THREE.BufferGeometry | undefined;
-      if (geo && typeof geo.dispose === 'function') geo.dispose();
+      if (geo && typeof geo.dispose === "function") geo.dispose();
     });
   };
 
@@ -517,7 +590,7 @@ const settings = {
   windSound: true,
   windVolume: 0.55,
   // Audio
-  engineVolume: 0.75
+  engineVolume: 0.75,
 };
 
 function terrainMaxDistance() {
@@ -547,11 +620,11 @@ function makeGrassTextures(seedStr: string) {
   const n2 = createNoise2D(texRng);
 
   const size = 512;
-  const canvas = document.createElement('canvas');
+  const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('No 2D context');
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("No 2D context");
 
   const img = ctx.createImageData(size, size);
   const data = img.data;
@@ -564,7 +637,7 @@ function makeGrassTextures(seedStr: string) {
       const v = y / size;
       const nA = n2(u * freq1, v * freq1);
       const nB = n2(u * freq2, v * freq2);
-      const t = 0.55 + 0.18 * nA + 0.10 * nB;
+      const t = 0.55 + 0.18 * nA + 0.1 * nB;
 
       const r = Math.round(40 + 45 * t);
       const g = Math.round(90 + 130 * t);
@@ -587,11 +660,11 @@ function makeGrassTextures(seedStr: string) {
   map.needsUpdate = true;
 
   // Lightweight normal map derived from noise gradient.
-  const nCanvas = document.createElement('canvas');
+  const nCanvas = document.createElement("canvas");
   nCanvas.width = size;
   nCanvas.height = size;
-  const nCtx = nCanvas.getContext('2d');
-  if (!nCtx) throw new Error('No 2D context');
+  const nCtx = nCanvas.getContext("2d");
+  if (!nCtx) throw new Error("No 2D context");
 
   const nImg = nCtx.createImageData(size, size);
   const nd = nImg.data;
@@ -639,18 +712,18 @@ const terrainMat = new THREE.MeshStandardMaterial({
   color: 0xffffff,
   roughness: 1.0,
   metalness: 0.0,
-  vertexColors: true
+  vertexColors: true,
 });
 
 function makeCementTexture(seedStr: string) {
   const texRng = seedrandom(`${seedStr}:cement`);
   const n2 = createNoise2D(texRng);
   const size = 256;
-  const canvas = document.createElement('canvas');
+  const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('No 2D context');
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("No 2D context");
   const img = ctx.createImageData(size, size);
   const d = img.data;
 
@@ -682,7 +755,7 @@ function makeCementTexture(seedStr: string) {
 let cementMap = makeCementTexture(seed);
 // Use an unlit material so the asphalt can't be tinted by scene lighting.
 const roadMat = new THREE.MeshBasicMaterial({
-  color: 0x2b2b2b
+  color: 0x2b2b2b,
 });
 roadMat.polygonOffset = true;
 roadMat.polygonOffsetFactor = -6;
@@ -692,7 +765,7 @@ const sidewalkMat = new THREE.MeshStandardMaterial({
   color: 0xe7e7e7,
   roughness: 0.95,
   metalness: 0.0,
-  map: cementMap
+  map: cementMap,
 });
 sidewalkMat.polygonOffset = true;
 sidewalkMat.polygonOffsetFactor = -7;
@@ -729,18 +802,21 @@ function updateRoadDebugLabel() {
   const msg = `road asphalt:#${asphaltHex} sidewalk:#${sidewalkHex}`;
   roadDebugEl.textContent = msg;
   // Helpful for DevTools confirmation.
-  console.log('[road]', msg);
+  console.log("[road]", msg);
 }
 
 updateRoadDebugLabel();
 
-const chunks = new Map<ChunkKey, {
-  mesh: THREE.Mesh;
-  roadMesh?: THREE.Object3D;
-  body: CANNON.Body;
-  cx: number;
-  cz: number;
-}>();
+const chunks = new Map<
+  ChunkKey,
+  {
+    mesh: THREE.Mesh;
+    roadMesh?: THREE.Object3D;
+    body: CANNON.Body;
+    cx: number;
+    cz: number;
+  }
+>();
 
 const pendingChunkBuilds: Array<{ cx: number; cz: number }> = [];
 const pendingChunkKeys = new Set<ChunkKey>();
@@ -765,7 +841,10 @@ function processChunkBuildQueue(maxBuilds: number) {
 
     // Skip stale queued chunks if the player has moved on.
     const r = settings.viewRadiusChunks;
-    if (Math.abs(next.cx - playerChunkCx) > r + 1 || Math.abs(next.cz - playerChunkCz) > r + 1) {
+    if (
+      Math.abs(next.cx - playerChunkCx) > r + 1 ||
+      Math.abs(next.cz - playerChunkCz) > r + 1
+    ) {
       continue;
     }
     buildChunk(next.cx, next.cz);
@@ -866,7 +945,11 @@ function buildChunk(cx: number, cz: number) {
     const slope = THREE.MathUtils.clamp(1 - nY, 0, 1);
     const variation = noise2D(worldX * 0.05, worldZ * 0.05) * 0.08;
     const heightTint = (h / Math.max(1e-6, settings.amplitude)) * 0.08;
-    const lightness = THREE.MathUtils.clamp(0.42 + variation + heightTint - slope * 0.35, 0.18, 0.62);
+    const lightness = THREE.MathUtils.clamp(
+      0.42 + variation + heightTint - slope * 0.35,
+      0.18,
+      0.62,
+    );
     tmpColor.setHSL(0.32, 0.62, lightness);
 
     // Tint the immediate road area (asphalt + sidewalk) to make the straightaway readable.
@@ -881,7 +964,7 @@ function buildChunk(cx: number, cz: number) {
     colors[i * 3 + 1] = tmpColor.g;
     colors[i * 3 + 2] = tmpColor.b;
   }
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
   // Clone material so we can fade this chunk in smoothly.
   const mat = terrainMat.clone();
@@ -899,7 +982,13 @@ function buildChunk(cx: number, cz: number) {
   const chunkMinX = startX - half;
   const chunkMaxX = startX + half;
   const segments = 40;
-  const buildRibbon = (leftW: number, rightW: number, material: THREE.Material, renderOrder: number, extraY: number) => {
+  const buildRibbon = (
+    leftW: number,
+    rightW: number,
+    material: THREE.Material,
+    renderOrder: number,
+    extraY: number,
+  ) => {
     const leftX = THREE.MathUtils.clamp(leftW, chunkMinX, chunkMaxX);
     const rightX = THREE.MathUtils.clamp(rightW, chunkMinX, chunkMaxX);
     if (rightX <= leftX + 0.01) return undefined;
@@ -930,8 +1019,11 @@ function buildChunk(cx: number, cz: number) {
     }
 
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(positions, 3),
+    );
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(indices);
     geo.computeVertexNormals();
 
@@ -951,9 +1043,27 @@ function buildChunk(cx: number, cz: number) {
   const rightSidewalkW1 = rightAsphaltW0 + settings.sidewalkWidth;
 
   // Let asphalt extend slightly under sidewalks; sidewalks draw on top.
-  const asphaltMesh = buildRibbon(leftAsphaltW0 - overlap, rightAsphaltW0 + overlap, roadMat, 10, 0.0);
-  const leftSidewalkMesh = buildRibbon(leftSidewalkW0, leftAsphaltW0 + overlap, sidewalkMat, 11, 0.01);
-  const rightSidewalkMesh = buildRibbon(rightAsphaltW0 - overlap, rightSidewalkW1, sidewalkMat, 11, 0.01);
+  const asphaltMesh = buildRibbon(
+    leftAsphaltW0 - overlap,
+    rightAsphaltW0 + overlap,
+    roadMat,
+    10,
+    0.0,
+  );
+  const leftSidewalkMesh = buildRibbon(
+    leftSidewalkW0,
+    leftAsphaltW0 + overlap,
+    sidewalkMat,
+    11,
+    0.01,
+  );
+  const rightSidewalkMesh = buildRibbon(
+    rightAsphaltW0 - overlap,
+    rightSidewalkW1,
+    sidewalkMat,
+    11,
+    0.01,
+  );
 
   let roadMesh: THREE.Object3D | undefined;
   if (asphaltMesh || leftSidewalkMesh || rightSidewalkMesh) {
@@ -983,12 +1093,12 @@ function buildChunk(cx: number, cz: number) {
   }
 
   const hf = new CANNON.Heightfield(heights, {
-    elementSize: size / res
+    elementSize: size / res,
   });
 
   const body = new CANNON.Body({
     mass: 0,
-    material: groundMaterial
+    material: groundMaterial,
   });
   body.addShape(hf);
   // Rotate heightfield so its local Z (height) becomes world Y (up).
@@ -1023,8 +1133,10 @@ function ensureChunksAround(x: number, z: number) {
         terrainGroup.remove(c.roadMesh);
         c.roadMesh.traverse((child) => {
           const mesh = child as THREE.Mesh;
-          const geo = (mesh as any).geometry as THREE.BufferGeometry | undefined;
-          if (geo && typeof geo.dispose === 'function') geo.dispose();
+          const geo = (mesh as any).geometry as
+            | THREE.BufferGeometry
+            | undefined;
+          if (geo && typeof geo.dispose === "function") geo.dispose();
         });
       }
       c.mesh.geometry.dispose();
@@ -1053,7 +1165,7 @@ const chassisMat = new THREE.MeshPhysicalMaterial({
   roughness: 0.38,
   metalness: 0.62,
   clearcoat: 0.45,
-  clearcoatRoughness: 0.14
+  clearcoatRoughness: 0.14,
 });
 
 // Visual root follows the physics body; meshes hang off this.
@@ -1075,9 +1187,21 @@ suvDetail.position.y = -0.18;
 suvDetail.visible = false;
 
 const paintMat = chassisMat;
-const claddingMat = new THREE.MeshStandardMaterial({ color: 0x0f1012, roughness: 0.96, metalness: 0.02 });
-const trimMat = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.9, metalness: 0.05 });
-const interiorMat = new THREE.MeshStandardMaterial({ color: 0x141517, roughness: 0.98, metalness: 0.0 });
+const claddingMat = new THREE.MeshStandardMaterial({
+  color: 0x0f1012,
+  roughness: 0.96,
+  metalness: 0.02,
+});
+const trimMat = new THREE.MeshStandardMaterial({
+  color: 0x15171a,
+  roughness: 0.9,
+  metalness: 0.05,
+});
+const interiorMat = new THREE.MeshStandardMaterial({
+  color: 0x141517,
+  roughness: 0.98,
+  metalness: 0.0,
+});
 const glassMat = new THREE.MeshPhysicalMaterial({
   color: 0x222b35,
   roughness: 0.04,
@@ -1086,7 +1210,7 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   transparent: true,
   opacity: 0.28,
   depthWrite: false,
-  side: THREE.DoubleSide
+  side: THREE.DoubleSide,
 });
 
 const lightLensMat = new THREE.MeshStandardMaterial({
@@ -1094,14 +1218,14 @@ const lightLensMat = new THREE.MeshStandardMaterial({
   roughness: 0.25,
   metalness: 0.0,
   emissive: new THREE.Color(0xffcc66),
-  emissiveIntensity: 1.2
+  emissiveIntensity: 1.2,
 });
 const rearLensMat = new THREE.MeshStandardMaterial({
   color: 0x101010,
   roughness: 0.25,
   metalness: 0.0,
   emissive: new THREE.Color(0xff3b2f),
-  emissiveIntensity: 0.45
+  emissiveIntensity: 0.45,
 });
 
 // ---- Cohesive body shell (extruded profile with wheel wells) ----
@@ -1109,30 +1233,34 @@ const rearLensMat = new THREE.MeshStandardMaterial({
 const wheelRest = 0.38;
 // 4" lift (about 0.1016m): raise wheel connection points so the body sits higher.
 const liftMeters = 0.1016;
-const baseConnYLocal = (-chassisSize.y * 0.1 + chassisShapeOffsetY);
+const baseConnYLocal = -chassisSize.y * 0.1 + chassisShapeOffsetY;
 const connYLocal = baseConnYLocal + liftMeters;
-const wheelWellY = (connYLocal - wheelRest) + 0.02;
+const wheelWellY = connYLocal - wheelRest + 0.02;
 const frontWellZ = chassisSize.z * 0.42;
 // Rear axle was sitting too far back under the OBJ body; pull it forward a bit.
 const rearWellZ = -chassisSize.z * 0.28;
 
 // Load the user-provided Chevy Suburban OBJ/MTL and swap it in as the vehicle shell.
 // Keeps the physics and existing wheel meshes; tries to hide any wheels that are part of the OBJ.
-void loadObjWithMtl('/models/chevy-suburban/', 'chevy_suburban.obj', 'chevy_suburban.mtl')
+void loadObjWithMtl(
+  "/models/chevy-suburban/",
+  "chevy_suburban.obj",
+  "chevy_suburban.mtl",
+)
   .then((obj) => {
     setModelShadowsAndColorSpace(obj);
     sanitizeObjMaterials(obj);
 
     const hideRe = /(wheel|tire|tyre|rim|brake|rotor)/i;
     obj.traverse((o) => {
-      const name = (o.name || '').toLowerCase();
+      const name = (o.name || "").toLowerCase();
       if (hideRe.test(name)) o.visible = false;
       const mesh = o as THREE.Mesh;
       if ((mesh as any).isMesh) {
         const mat = mesh.material as any;
         const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
         for (const m of mats) {
-          const mName = (m?.name || '').toLowerCase();
+          const mName = (m?.name || "").toLowerCase();
           if (hideRe.test(mName)) mesh.visible = false;
         }
       }
@@ -1140,8 +1268,16 @@ void loadObjWithMtl('/models/chevy-suburban/', 'chevy_suburban.obj', 'chevy_subu
 
     // Extract wheel templates from the OBJ and use them for our physics wheels.
     // (The shell's own wheels are hidden above to avoid duplicates.)
-    const wheelTemplates = extractWheelTemplatesFromObj(obj, wheelRadius, wheelWidth);
-    const hasAll4 = (wheelTemplates as any)[0] && (wheelTemplates as any)[1] && (wheelTemplates as any)[2] && (wheelTemplates as any)[3];
+    const wheelTemplates = extractWheelTemplatesFromObj(
+      obj,
+      wheelRadius,
+      wheelWidth,
+    );
+    const hasAll4 =
+      (wheelTemplates as any)[0] &&
+      (wheelTemplates as any)[1] &&
+      (wheelTemplates as any)[2] &&
+      (wheelTemplates as any)[3];
     if (hasAll4) {
       for (const k of Object.keys(wheelTemplates)) {
         const tpl = (wheelTemplates as any)[k] as THREE.Object3D | undefined;
@@ -1150,14 +1286,21 @@ void loadObjWithMtl('/models/chevy-suburban/', 'chevy_suburban.obj', 'chevy_subu
         setModelShadowsAndColorSpace(tpl);
       }
       applyWheelTemplatesToVehicle(wheelTemplates);
-      console.log('[vehicle] using OBJ wheel templates (all 4)');
+      console.log("[vehicle] using OBJ wheel templates (all 4)");
     } else {
-      console.warn('[vehicle] OBJ wheel extraction incomplete; using procedural cylinder wheels');
+      console.warn(
+        "[vehicle] OBJ wheel extraction incomplete; using procedural cylinder wheels",
+      );
     }
 
     const targetLengthZ = chassisSize.z * 1.22;
     const restGroundYLocal = connYLocal - wheelRest - wheelRadius;
-    fitCenterAndPlaceOnRestGroundY(obj, targetLengthZ, restGroundYLocal, Math.PI);
+    fitCenterAndPlaceOnRestGroundY(
+      obj,
+      targetLengthZ,
+      restGroundYLocal,
+      Math.PI,
+    );
 
     objVehicleRoot.clear();
     objVehicleRoot.add(obj);
@@ -1173,33 +1316,42 @@ void loadObjWithMtl('/models/chevy-suburban/', 'chevy_suburban.obj', 'chevy_subu
       const bodyHalfX = Math.max(0.2, size.x * 0.5);
       const protrusion = 0.0254; // 1 inch
       const wheelHalfWidth = wheelWidth * 0.5;
-      const targetCenterX = Math.max(0.25, bodyHalfX - wheelHalfWidth + protrusion);
-      if (typeof vehicle !== 'undefined' && vehicle?.wheelInfos?.length >= 4) {
+      const targetCenterX = Math.max(
+        0.25,
+        bodyHalfX - wheelHalfWidth + protrusion,
+      );
+      if (typeof vehicle !== "undefined" && vehicle?.wheelInfos?.length >= 4) {
         vehicle.wheelInfos[0].chassisConnectionPointLocal.x = -targetCenterX;
         vehicle.wheelInfos[1].chassisConnectionPointLocal.x = targetCenterX;
         vehicle.wheelInfos[2].chassisConnectionPointLocal.x = -targetCenterX;
         vehicle.wheelInfos[3].chassisConnectionPointLocal.x = targetCenterX;
-        console.log('[vehicle] track set from OBJ width', { bodyHalfX, targetCenterX });
+        console.log("[vehicle] track set from OBJ width", {
+          bodyHalfX,
+          targetCenterX,
+        });
       } else {
         (vehicleGroup.userData as any).pendingTrackCenterX = targetCenterX;
       }
     } catch {
       // ignore
     }
-    console.log('[vehicle] loaded OBJ model: chevy_suburban');
+    console.log("[vehicle] loaded OBJ model: chevy_suburban");
   })
   .catch((err) => {
-    console.warn('[vehicle] failed to load OBJ model; using procedural SUV shell', err);
+    console.warn(
+      "[vehicle] failed to load OBJ model; using procedural SUV shell",
+      err,
+    );
     suvDetail.visible = true;
   });
 
 function bendPlaneZ(geo: THREE.BufferGeometry, bend: number) {
-  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const pos = geo.getAttribute("position") as THREE.BufferAttribute;
   const tmp = new THREE.Vector3();
   for (let i = 0; i < pos.count; i++) {
     tmp.fromBufferAttribute(pos, i);
     const t = tmp.x;
-    tmp.z += (t * t) * bend;
+    tmp.z += t * t * bend;
     pos.setXYZ(i, tmp.x, tmp.y, tmp.z);
   }
   pos.needsUpdate = true;
@@ -1223,10 +1375,28 @@ function makeBodyShape(bodyLen: number, yMin: number, yMax: number) {
 
   const archR = wheelRadius + 0.14;
   const archF = new THREE.Path();
-  archF.absellipse(frontWellZ, wheelWellY, archR, archR * 0.92, 0, Math.PI * 2, false, 0);
+  archF.absellipse(
+    frontWellZ,
+    wheelWellY,
+    archR,
+    archR * 0.92,
+    0,
+    Math.PI * 2,
+    false,
+    0,
+  );
   s.holes.push(archF);
   const archRr = new THREE.Path();
-  archRr.absellipse(rearWellZ, wheelWellY, archR, archR * 0.92, 0, Math.PI * 2, false, 0);
+  archRr.absellipse(
+    rearWellZ,
+    wheelWellY,
+    archR,
+    archR * 0.92,
+    0,
+    Math.PI * 2,
+    false,
+    0,
+  );
   s.holes.push(archRr);
 
   return s;
@@ -1245,7 +1415,7 @@ const bodyGeo = new THREE.ExtrudeGeometry(bodyShape, {
   bevelThickness: 0.045,
   bevelSegments: 2,
   curveSegments: 24,
-  steps: 1
+  steps: 1,
 });
 bodyGeo.translate(0, 0, -bodyW / 2);
 bodyGeo.rotateY(-Math.PI / 2);
@@ -1292,7 +1462,7 @@ const cabinGeo = new THREE.ExtrudeGeometry(cabinShape, {
   bevelThickness: 0.04,
   bevelSegments: 2,
   curveSegments: 24,
-  steps: 1
+  steps: 1,
 });
 cabinGeo.translate(0, 0, -cabinW / 2);
 cabinGeo.rotateY(-Math.PI / 2);
@@ -1317,20 +1487,29 @@ const sideWinH = 0.34;
 const sideWinL = cabinL * 0.34;
 const sideWinY = cabinYMin + 0.28;
 for (const sx of [-1, 1]) {
-  const lf = new THREE.Mesh(new THREE.PlaneGeometry(sideWinL, sideWinH), glassMat);
+  const lf = new THREE.Mesh(
+    new THREE.PlaneGeometry(sideWinL, sideWinH),
+    glassMat,
+  );
   lf.position.set(sx * (cabinW / 2 + eps), sideWinY, cabinL * 0.16);
   lf.rotation.y = sx > 0 ? -Math.PI / 2 : Math.PI / 2;
   lf.renderOrder = 10;
   suvDetail.add(lf);
 
-  const lr = new THREE.Mesh(new THREE.PlaneGeometry(sideWinL, sideWinH), glassMat);
+  const lr = new THREE.Mesh(
+    new THREE.PlaneGeometry(sideWinL, sideWinH),
+    glassMat,
+  );
   lr.position.set(sx * (cabinW / 2 + eps), sideWinY, -cabinL * 0.16);
   lr.rotation.y = sx > 0 ? -Math.PI / 2 : Math.PI / 2;
   lr.renderOrder = 10;
   suvDetail.add(lr);
 }
 
-const rearWin = new THREE.Mesh(new THREE.PlaneGeometry(cabinW * 0.82, 0.38), glassMat);
+const rearWin = new THREE.Mesh(
+  new THREE.PlaneGeometry(cabinW * 0.82, 0.38),
+  glassMat,
+);
 rearWin.position.set(0, cabinYMin + 0.28, -cabinL / 2 - 0.03);
 rearWin.rotation.y = Math.PI;
 rearWin.renderOrder = 10;
@@ -1373,23 +1552,35 @@ for (const sx of [-1, 1]) {
 }
 
 // Interior (dark volume so windows read correctly)
-const interiorGeo = new RoundedBoxGeometry(cabinW * 0.94, 0.44, cabinL * 0.92, 5, 0.06);
+const interiorGeo = new RoundedBoxGeometry(
+  cabinW * 0.94,
+  0.44,
+  cabinL * 0.92,
+  5,
+  0.06,
+);
 const interior = new THREE.Mesh(interiorGeo, interiorMat);
 interior.position.set(0, cabinYMin + 0.18, 0);
 suvDetail.add(interior);
 
 // Spare tire mount point (tire itself added later once wheel geometry exists)
 const spareMount = new THREE.Group();
-spareMount.position.set(bodyW * 0.5 + 0.06, wheelWellY + 0.18, -bodyL / 2 + 0.25);
+spareMount.position.set(
+  bodyW * 0.5 + 0.06,
+  wheelWellY + 0.18,
+  -bodyL / 2 + 0.25,
+);
 spareMount.rotation.y = -Math.PI / 2;
 suvDetail.add(spareMount);
 
-const chassisShape = new CANNON.Box(new CANNON.Vec3(chassisSize.x / 2, chassisSize.y / 2, chassisSize.z / 2));
+const chassisShape = new CANNON.Box(
+  new CANNON.Vec3(chassisSize.x / 2, chassisSize.y / 2, chassisSize.z / 2),
+);
 const chassisBody = new CANNON.Body({
   mass: 240,
   material: tireMaterial,
   angularDamping: 0.4,
-  linearDamping: 0.06
+  linearDamping: 0.06,
 });
 
 // Lower center of mass by raising collision geometry relative to body origin.
@@ -1409,13 +1600,13 @@ const vehicle = new CANNON.RaycastVehicle({
   chassisBody,
   indexRightAxis: 0,
   indexUpAxis: 1,
-  indexForwardAxis: 2
+  indexForwardAxis: 2,
 });
 
 const wheelWidth = 0.28;
 
 // Tire: hollow cylinder with 16" inner hole (sidewalls included)
-const innerRadius = wheelRadius * 0.55;  // 16" diameter hole
+const innerRadius = wheelRadius * 0.55; // 16" diameter hole
 const tireProfile: THREE.Vector2[] = [];
 // Create profile in correct winding order for outward-facing normals
 tireProfile.push(new THREE.Vector2(innerRadius, -wheelWidth / 2));
@@ -1425,7 +1616,12 @@ tireProfile.push(new THREE.Vector2(innerRadius, wheelWidth / 2));
 const tireGeo = new THREE.LatheGeometry(tireProfile, 32);
 tireGeo.rotateX(Math.PI / 2);
 tireGeo.rotateY(Math.PI / 2);
-const tireMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide });
+const tireMat = new THREE.MeshStandardMaterial({
+  color: 0x0a0a0a,
+  roughness: 0.95,
+  metalness: 0.0,
+  side: THREE.DoubleSide,
+});
 
 // Rim: chrome 5-spoke wheel
 function make5SpokeRim(radius: number, width: number): THREE.Group {
@@ -1434,18 +1630,27 @@ function make5SpokeRim(radius: number, width: number): THREE.Group {
     color: 0xd4d4d4,
     roughness: 0.18,
     metalness: 0.92,
-    envMapIntensity: 1.2
+    envMapIntensity: 1.2,
   });
 
   // Center hub
-  const hubGeo = new THREE.CylinderGeometry(radius * 0.22, radius * 0.22, width * 0.85, 16);
+  const hubGeo = new THREE.CylinderGeometry(
+    radius * 0.22,
+    radius * 0.22,
+    width * 0.85,
+    16,
+  );
   hubGeo.rotateZ(Math.PI / 2);
   const hub = new THREE.Mesh(hubGeo, chromeMat);
   hub.castShadow = true;
   rimGroup.add(hub);
 
   // 5 spokes
-  const spokeGeo = new THREE.BoxGeometry(radius * 0.65, width * 0.4, radius * 0.12);
+  const spokeGeo = new THREE.BoxGeometry(
+    radius * 0.65,
+    width * 0.4,
+    radius * 0.12,
+  );
   for (let i = 0; i < 5; i++) {
     const spoke = new THREE.Mesh(spokeGeo, chromeMat);
     spoke.castShadow = true;
@@ -1477,7 +1682,12 @@ function initWheelInterpolation() {
     vehicle.updateWheelTransform(i);
     const t = vehicle.wheelInfos[i].worldTransform;
     const p = new THREE.Vector3(t.position.x, t.position.y, t.position.z);
-    const q = new THREE.Quaternion(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
+    const q = new THREE.Quaternion(
+      t.quaternion.x,
+      t.quaternion.y,
+      t.quaternion.z,
+      t.quaternion.w,
+    );
     prevWheelPos[i] = p.clone();
     currWheelPos[i] = p.clone();
     wheelRenderPos[i] = p.clone();
@@ -1507,7 +1717,7 @@ const wheelOptions: CANNON.WheelInfoOptions = {
   rollInfluence: 0.03,
   axleLocal: new CANNON.Vec3(-1, 0, 0),
   chassisConnectionPointLocal: new CANNON.Vec3(),
-  maxSuspensionTravel: 0.35
+  maxSuspensionTravel: 0.35,
 };
 
 // Initial half-track; may be overridden once the OBJ body width is known.
@@ -1522,17 +1732,17 @@ const wheelPoints: Array<[number, number, number]> = [
   [-halfW, connY, frontZ],
   [halfW, connY, frontZ],
   [-halfW, connY, rearZ],
-  [halfW, connY, rearZ]
+  [halfW, connY, rearZ],
 ];
 
 for (const [x, y, z] of wheelPoints) {
   vehicle.addWheel({
     ...wheelOptions,
-    chassisConnectionPointLocal: new CANNON.Vec3(x, y, z)
+    chassisConnectionPointLocal: new CANNON.Vec3(x, y, z),
   });
 
   const wheelRoot = new THREE.Group();
-  
+
   // Build procedural wheel with tire + 5-spoke rim
   const tire = new THREE.Mesh(tireGeo, tireMat);
   tire.castShadow = true;
@@ -1551,8 +1761,13 @@ for (const [x, y, z] of wheelPoints) {
 (vehicleGroup.userData as any).proceduralWheelVisuals = proceduralWheelVisuals;
 
 // Apply pending track adjustment computed during OBJ load (if it finished early).
-const pendingTrackCenterX = (vehicleGroup.userData as any).pendingTrackCenterX as number | undefined;
-if (pendingTrackCenterX !== undefined && Number.isFinite(pendingTrackCenterX) && vehicle.wheelInfos.length >= 4) {
+const pendingTrackCenterX = (vehicleGroup.userData as any)
+  .pendingTrackCenterX as number | undefined;
+if (
+  pendingTrackCenterX !== undefined &&
+  Number.isFinite(pendingTrackCenterX) &&
+  vehicle.wheelInfos.length >= 4
+) {
   vehicle.wheelInfos[0].chassisConnectionPointLocal.x = -pendingTrackCenterX;
   vehicle.wheelInfos[1].chassisConnectionPointLocal.x = pendingTrackCenterX;
   vehicle.wheelInfos[2].chassisConnectionPointLocal.x = -pendingTrackCenterX;
@@ -1560,14 +1775,15 @@ if (pendingTrackCenterX !== undefined && Number.isFinite(pendingTrackCenterX) &&
   delete (vehicleGroup.userData as any).pendingTrackCenterX;
 }
 
-const pendingTemplates = (vehicleGroup.userData as any).pendingWheelTemplates as Partial<Record<number, THREE.Object3D>> | undefined;
+const pendingTemplates = (vehicleGroup.userData as any)
+  .pendingWheelTemplates as Partial<Record<number, THREE.Object3D>> | undefined;
 if (pendingTemplates) {
   applyWheelTemplatesToVehicle(pendingTemplates as any);
   delete (vehicleGroup.userData as any).pendingWheelTemplates;
 }
 
 // Rear-mounted spare tire
-if (typeof spareMount !== 'undefined' && spareMount) {
+if (typeof spareMount !== "undefined" && spareMount) {
   const spareTire = new THREE.Mesh(tireGeo, tireMat);
   spareTire.castShadow = true;
   const spareRim = rimTemplate.clone(true);
@@ -1588,7 +1804,7 @@ const keys = {
   a: false,
   s: false,
   d: false,
-  space: false
+  space: false,
 };
 
 let throttle = 0;
@@ -1603,7 +1819,7 @@ const drivetrain = {
   idleRpm: 650,
   redlineRpm: 4200,
   upshiftRpm: 3200,
-  downshiftRpm: 1050
+  downshiftRpm: 1050,
 };
 
 function resetDrivetrain() {
@@ -1665,37 +1881,37 @@ class V8EngineAudio {
     this.exhaustGain.gain.value = 0.0;
 
     this.lp = ctx.createBiquadFilter();
-    this.lp.type = 'lowpass';
+    this.lp.type = "lowpass";
     this.lp.frequency.value = 380;
     this.lp.Q.value = 0.75;
 
     this.hp = ctx.createBiquadFilter();
-    this.hp.type = 'highpass';
+    this.hp.type = "highpass";
     this.hp.frequency.value = 22;
     this.hp.Q.value = 0.7;
 
     this.lowShelf = ctx.createBiquadFilter();
-    this.lowShelf.type = 'lowshelf';
+    this.lowShelf.type = "lowshelf";
     this.lowShelf.frequency.value = 95;
     this.lowShelf.gain.value = 11;
 
     // "Engine body" resonances: adds throat/boom without buzzy harmonics.
     this.bodyBp = ctx.createBiquadFilter();
-    this.bodyBp.type = 'bandpass';
+    this.bodyBp.type = "bandpass";
     this.bodyBp.frequency.value = 120;
     this.bodyBp.Q.value = 0.95;
 
     this.bodyBp2 = ctx.createBiquadFilter();
-    this.bodyBp2.type = 'bandpass';
+    this.bodyBp2.type = "bandpass";
     this.bodyBp2.frequency.value = 240;
     this.bodyBp2.Q.value = 0.8;
 
     this.drive = ctx.createWaveShaper();
-    this.drive.oversample = '4x';
+    this.drive.oversample = "4x";
     const makeCurve = (amount: number) => {
       const n = 1024;
       const curve = new Float32Array(n);
-      const k = typeof amount === 'number' ? amount : 30;
+      const k = typeof amount === "number" ? amount : 30;
       for (let i = 0; i < n; i++) {
         const x = (i * 2) / (n - 1) - 1;
         curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
@@ -1714,13 +1930,13 @@ class V8EngineAudio {
     // Oscillators: sine-based rumble (less "8-bit" than square/triangle).
     // oscB is used as a pulse driver (not audible directly).
     this.oscA = ctx.createOscillator();
-    this.oscA.type = 'sine';
+    this.oscA.type = "sine";
     this.oscC = ctx.createOscillator();
-    this.oscC.type = 'sine';
+    this.oscC.type = "sine";
     this.oscSub = ctx.createOscillator();
-    this.oscSub.type = 'sine';
+    this.oscSub.type = "sine";
     this.oscB = ctx.createOscillator();
-    this.oscB.type = 'sawtooth';
+    this.oscB.type = "sawtooth";
 
     const rumbleMix = ctx.createGain();
     rumbleMix.gain.value = 0.28;
@@ -1736,7 +1952,11 @@ class V8EngineAudio {
     this.subGain.connect(this.engineGain);
 
     // Exhaust-ish noise
-    const noiseBuffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 2.0), ctx.sampleRate);
+    const noiseBuffer = ctx.createBuffer(
+      1,
+      Math.floor(ctx.sampleRate * 2.0),
+      ctx.sampleRate,
+    );
     const ch = noiseBuffer.getChannelData(0);
     for (let i = 0; i < ch.length; i++) ch[i] = (Math.random() * 2 - 1) * 0.7;
 
@@ -1745,7 +1965,7 @@ class V8EngineAudio {
     this.noiseSrc.loop = true;
 
     const noiseBp = ctx.createBiquadFilter();
-    noiseBp.type = 'bandpass';
+    noiseBp.type = "bandpass";
     noiseBp.frequency.value = 85;
     noiseBp.Q.value = 1.2;
 
@@ -1754,7 +1974,7 @@ class V8EngineAudio {
     this.exhaustGate.gain.value = 0.0;
 
     this.pulseShaper = ctx.createWaveShaper();
-    this.pulseShaper.oversample = '4x';
+    this.pulseShaper.oversample = "4x";
     const pulseCurve = (() => {
       const n = 2048;
       const curve = new Float32Array(n);
@@ -1789,12 +2009,12 @@ class V8EngineAudio {
     this.windGain.gain.value = 0.0;
 
     this.windHp = ctx.createBiquadFilter();
-    this.windHp.type = 'highpass';
+    this.windHp.type = "highpass";
     this.windHp.frequency.value = 120;
     this.windHp.Q.value = 0.7;
 
     this.windLp = ctx.createBiquadFilter();
-    this.windLp.type = 'lowpass';
+    this.windLp.type = "lowpass";
     this.windLp.frequency.value = 1200;
     this.windLp.Q.value = 0.6;
 
@@ -1824,16 +2044,25 @@ class V8EngineAudio {
 
   resumeIfNeeded() {
     if (!this.ctx) return;
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    if (this.ctx.state === "suspended") void this.ctx.resume();
   }
 
   update(
     params: { rpm: number; throttle: number; shifting: boolean },
     dt: number,
     wind?: { speedMps: number; enabled: boolean; volume: number },
-    engine?: { volume: number }
+    engine?: { volume: number },
   ) {
-    if (!this.ctx || !this.engineGain || !this.exhaustGain || !this.lp || !this.exhaustGate || !this.pulseGain || !this.engineBus) return;
+    if (
+      !this.ctx ||
+      !this.engineGain ||
+      !this.exhaustGain ||
+      !this.lp ||
+      !this.exhaustGate ||
+      !this.pulseGain ||
+      !this.engineBus
+    )
+      return;
     const ctx = this.ctx;
 
     // Engine volume control (independent of wind).
@@ -1853,12 +2082,19 @@ class V8EngineAudio {
       // Update jitter target more often at idle, slightly smoother at high RPM.
       const rate = THREE.MathUtils.clamp(1.6 - rpm / 6000, 0.55, 1.6);
       this.jitterTimer = THREE.MathUtils.lerp(0.04, 0.22, Math.random()) * rate;
-      this.jitterTarget = (Math.random() * 2 - 1);
+      this.jitterTarget = Math.random() * 2 - 1;
     }
     const jitterFollow = 1 - Math.exp(-dt * 8.0);
-    this.jitter = THREE.MathUtils.lerp(this.jitter, this.jitterTarget, jitterFollow);
+    this.jitter = THREE.MathUtils.lerp(
+      this.jitter,
+      this.jitterTarget,
+      jitterFollow,
+    );
     const lowRpm01 = THREE.MathUtils.clamp((1200 - rpm) / 900, 0, 1);
-    const jitterPct = this.jitter * (0.006 + 0.014 * thr) * (0.5 + 0.9 * lowRpm01 + 0.3 * (rpm / 4200));
+    const jitterPct =
+      this.jitter *
+      (0.006 + 0.014 * thr) *
+      (0.5 + 0.9 * lowRpm01 + 0.3 * (rpm / 4200));
 
     const baseHz = Math.max(15, fireHz * (1 + jitterPct));
 
@@ -1869,7 +2105,11 @@ class V8EngineAudio {
 
     // Throaty low RPM emphasis; less fizz at high RPM.
     const rumbleBoost = 1.0 + lowRpm01 * 0.65;
-    this.engineGain.gain.setTargetAtTime(baseLoud * 0.85 * rumbleBoost, t, 0.04);
+    this.engineGain.gain.setTargetAtTime(
+      baseLoud * 0.85 * rumbleBoost,
+      t,
+      0.04,
+    );
     this.exhaustGain.gain.setTargetAtTime(baseExhaust * 0.55, t, 0.06);
 
     // Gate strength = perceived "pops" (more at low RPM, less at high).
@@ -1877,12 +2117,24 @@ class V8EngineAudio {
     this.pulseGain.gain.setTargetAtTime(pop, t, 0.05);
 
     // Filter opens up with RPM + throttle, but keep it dark for a big-block.
-    const lpHz = THREE.MathUtils.clamp(160 + rpm * 0.105 + thr * 420, 140, 1200);
+    const lpHz = THREE.MathUtils.clamp(
+      160 + rpm * 0.105 + thr * 420,
+      140,
+      1200,
+    );
     this.lp.frequency.setTargetAtTime(lpHz, t, 0.05);
 
     // Body resonances track RPM slightly.
-    this.bodyBp?.frequency.setTargetAtTime(THREE.MathUtils.clamp(92 + rpm * 0.03, 85, 210), t, 0.06);
-    this.bodyBp2?.frequency.setTargetAtTime(THREE.MathUtils.clamp(200 + rpm * 0.04, 160, 420), t, 0.06);
+    this.bodyBp?.frequency.setTargetAtTime(
+      THREE.MathUtils.clamp(92 + rpm * 0.03, 85, 210),
+      t,
+      0.06,
+    );
+    this.bodyBp2?.frequency.setTargetAtTime(
+      THREE.MathUtils.clamp(200 + rpm * 0.04, 160, 420),
+      t,
+      0.06,
+    );
 
     // Rumble oscillators (subharmonics of firing frequency).
     const rumbleHz = Math.max(18, baseHz * 0.5);
@@ -1897,7 +2149,8 @@ class V8EngineAudio {
 
     // Irregularity: lumpy idle + cammy wobble, stronger at low RPM.
     this.wobblePhase += dt;
-    const cam = Math.sin(this.wobblePhase * (3.1 + thr * 1.7)) * (18 * lowRpm01);
+    const cam =
+      Math.sin(this.wobblePhase * (3.1 + thr * 1.7)) * (18 * lowRpm01);
     const detuneJitter = this.jitter * (28 * (0.5 + lowRpm01));
     this.oscA?.detune.setTargetAtTime(cam + detuneJitter, t, 0.09);
     this.oscC?.detune.setTargetAtTime(detuneJitter * 0.6, t, 0.09);
@@ -1928,32 +2181,32 @@ const engineAudio = new V8EngineAudio();
 
 function downloadScreenshot() {
   try {
-    const dataUrl = renderer.domElement.toDataURL('image/png');
-    const a = document.createElement('a');
+    const dataUrl = renderer.domElement.toDataURL("image/png");
+    const a = document.createElement("a");
     a.href = dataUrl;
     a.download = `openevt_${seed.slice(0, 10)}.png`;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    console.log('[screenshot] downloaded');
+    console.log("[screenshot] downloaded");
   } catch (err) {
-    console.warn('[screenshot] failed', err);
+    console.warn("[screenshot] failed", err);
   }
 }
 
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyW') keys.w = true;
-  if (e.code === 'KeyA') keys.a = true;
-  if (e.code === 'KeyS') keys.s = true;
-  if (e.code === 'KeyD') keys.d = true;
-  if (e.code === 'Space') keys.space = true;
-  if (e.code === 'KeyP') downloadScreenshot();
-  if (e.code === 'KeyB') {
+window.addEventListener("keydown", (e) => {
+  if (e.code === "KeyW") keys.w = true;
+  if (e.code === "KeyA") keys.a = true;
+  if (e.code === "KeyS") keys.s = true;
+  if (e.code === "KeyD") keys.d = true;
+  if (e.code === "Space") keys.space = true;
+  if (e.code === "KeyP") downloadScreenshot();
+  if (e.code === "KeyB") {
     // Rebuild chunks/road meshes using the same seed (useful after tuning visuals).
     reseedTerrain(seed);
     ensureChunksAround(chassisBody.position.x, chassisBody.position.z);
   }
-  if (e.code === 'KeyR') {
+  if (e.code === "KeyR") {
     // Full reset: new terrain seed + respawn vehicle.
     reseedTerrain();
     placeVehicle(0, 0);
@@ -1962,18 +2215,18 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-window.addEventListener('keyup', (e) => {
-  if (e.code === 'KeyW') keys.w = false;
-  if (e.code === 'KeyA') keys.a = false;
-  if (e.code === 'KeyS') keys.s = false;
-  if (e.code === 'KeyD') keys.d = false;
-  if (e.code === 'Space') keys.space = false;
+window.addEventListener("keyup", (e) => {
+  if (e.code === "KeyW") keys.w = false;
+  if (e.code === "KeyA") keys.a = false;
+  if (e.code === "KeyS") keys.s = false;
+  if (e.code === "KeyD") keys.d = false;
+  if (e.code === "Space") keys.space = false;
 });
 
 const control = {
   maxSteer: 0.42,
   maxForce: 1500,
-  brakeForce: 22
+  brakeForce: 22,
 };
 
 function updateDrive() {
@@ -1996,7 +2249,12 @@ function updateDrive() {
   const reverse = keys.s ? 1 : 0;
 
   const braking = keys.space;
-  throttle = !braking && forward && !reverse ? 1 : !braking && reverse && !forward ? 0.55 : 0;
+  throttle =
+    !braking && forward && !reverse
+      ? 1
+      : !braking && reverse && !forward
+        ? 0.55
+        : 0;
 
   if (braking) {
     // Brake all wheels; keep engine force at zero.
@@ -2036,7 +2294,7 @@ function updateTransmissionAndAudio(dt: number) {
   // Torque-converter style slip: enough for launch, but avoid constant high-rev flare.
   const slip = THREE.MathUtils.lerp(0.04, 0.22, throttle);
   const ratio = drivetrain.gearRatios[drivetrain.gear] * drivetrain.finalDrive;
-  const rpmFromWheels = (wheelOmega * ratio) * (60 / (2 * Math.PI));
+  const rpmFromWheels = wheelOmega * ratio * (60 / (2 * Math.PI));
   const targetRpm = Math.max(drivetrain.idleRpm, rpmFromWheels * (1 + slip));
 
   if (drivetrain.isShifting) {
@@ -2047,7 +2305,11 @@ function updateTransmissionAndAudio(dt: number) {
     }
   } else {
     const maxGear = drivetrain.gearRatios.length - 1;
-    if (throttle > 0.12 && drivetrain.gear < maxGear && targetRpm > drivetrain.upshiftRpm) {
+    if (
+      throttle > 0.12 &&
+      drivetrain.gear < maxGear &&
+      targetRpm > drivetrain.upshiftRpm
+    ) {
       drivetrain.gear++;
       drivetrain.isShifting = true;
       drivetrain.shiftTimer = 0.22;
@@ -2059,20 +2321,24 @@ function updateTransmissionAndAudio(dt: number) {
   }
 
   const ratio2 = drivetrain.gearRatios[drivetrain.gear] * drivetrain.finalDrive;
-  const rpmFromWheels2 = (wheelOmega * ratio2) * (60 / (2 * Math.PI));
+  const rpmFromWheels2 = wheelOmega * ratio2 * (60 / (2 * Math.PI));
   const rpm = THREE.MathUtils.clamp(
     Math.max(drivetrain.idleRpm, rpmFromWheels2 * (1 + slip)),
     drivetrain.idleRpm,
-    drivetrain.redlineRpm
+    drivetrain.redlineRpm,
   );
 
   engineAudio.update(
     { rpm, throttle, shifting: drivetrain.isShifting },
     dt,
-    { speedMps: speed, enabled: settings.windSound, volume: settings.windVolume },
-    { volume: settings.engineVolume }
+    {
+      speedMps: speed,
+      enabled: settings.windSound,
+      volume: settings.windVolume,
+    },
+    { volume: settings.engineVolume },
   );
-  hudReadout.textContent = `gear: ${drivetrain.gear} • rpm: ${Math.round(rpm)} • wheel rpm: ${Math.round(wheelRpm)} • mph: ${Math.round(speedMph)}${drivetrain.isShifting ? ' (shift)' : ''}`;
+  hudReadout.textContent = `gear: ${drivetrain.gear} • rpm: ${Math.round(rpm)} • wheel rpm: ${Math.round(wheelRpm)} • mph: ${Math.round(speedMph)}${drivetrain.isShifting ? " (shift)" : ""}`;
 }
 
 function applyAeroDrag() {
@@ -2088,7 +2354,10 @@ function applyAeroDrag() {
 
   const dragMag = k * speed * speed;
   const inv = 1 / speed;
-  chassisBody.applyForce(new CANNON.Vec3(-vx * inv * dragMag, 0, -vz * inv * dragMag), chassisBody.position);
+  chassisBody.applyForce(
+    new CANNON.Vec3(-vx * inv * dragMag, 0, -vz * inv * dragMag),
+    chassisBody.position,
+  );
 }
 
 // ---------- Camera follow ----------
@@ -2108,12 +2377,22 @@ let camDistance = 11;
 const camDistanceMin = 2.2;
 const camDistanceMax = 32;
 
-function dampVec3(current: THREE.Vector3, target: THREE.Vector3, lambda: number, dt: number) {
+function dampVec3(
+  current: THREE.Vector3,
+  target: THREE.Vector3,
+  lambda: number,
+  dt: number,
+) {
   const t = 1 - Math.exp(-lambda * dt);
   current.lerp(target, t);
 }
 
-function dampAngle(current: number, target: number, lambda: number, dt: number) {
+function dampAngle(
+  current: number,
+  target: number,
+  lambda: number,
+  dt: number,
+) {
   // shortest-path angular interpolation
   let delta = ((target - current + Math.PI) % (Math.PI * 2)) - Math.PI;
   if (delta < -Math.PI) delta += Math.PI * 2;
@@ -2126,15 +2405,15 @@ let yawOffset = 0;
 let pitch = 0.18;
 let isPointerLocked = false;
 
-canvas.addEventListener('click', (e) => {
+canvas.addEventListener("click", (e) => {
   const target = e.target as HTMLElement | null;
   if (target) {
     // Defensive: never capture pointer when clicking UI overlays.
     if (gui?.domElement?.contains(target)) return;
     if (stats?.dom?.contains(target)) return;
     if (hudEl?.contains(target)) return;
-    if (target.closest?.('.lil-gui')) return;
-    if (target.closest?.('#hud')) return;
+    if (target.closest?.(".lil-gui")) return;
+    if (target.closest?.("#hud")) return;
   }
 
   canvas.requestPointerLock();
@@ -2142,11 +2421,11 @@ canvas.addEventListener('click', (e) => {
   engineAudio.resumeIfNeeded();
 });
 
-document.addEventListener('pointerlockchange', () => {
+document.addEventListener("pointerlockchange", () => {
   isPointerLocked = document.pointerLockElement === canvas;
 });
 
-document.addEventListener('mousemove', (e) => {
+document.addEventListener("mousemove", (e) => {
   if (!isPointerLocked) return;
   yawOffset -= e.movementX * 0.002;
   pitch -= e.movementY * 0.002;
@@ -2156,16 +2435,24 @@ document.addEventListener('mousemove', (e) => {
 
 // Mouse wheel zoom (works without pointer lock)
 window.addEventListener(
-  'wheel',
+  "wheel",
   (e) => {
     // deltaY > 0 usually means scroll down -> zoom out
-    camDistance = THREE.MathUtils.clamp(camDistance + e.deltaY * 0.01, camDistanceMin, camDistanceMax);
+    camDistance = THREE.MathUtils.clamp(
+      camDistance + e.deltaY * 0.01,
+      camDistanceMin,
+      camDistanceMax,
+    );
   },
-  { passive: true }
+  { passive: true },
 );
 
 function updateCamera(dt: number) {
-  camTarget.set(chassisRenderPos.x, chassisRenderPos.y + 1.2, chassisRenderPos.z);
+  camTarget.set(
+    chassisRenderPos.x,
+    chassisRenderPos.y + 1.2,
+    chassisRenderPos.z,
+  );
 
   // Smooth target to absorb suspension/physics jitter.
   if (camTargetSmoothed.lengthSq() === 0) camTargetSmoothed.copy(camTarget);
@@ -2185,7 +2472,11 @@ function updateCamera(dt: number) {
   // True orbit camera: pitch controls vertical angle around the target.
   const cp = Math.cos(pitch);
   const sp = Math.sin(pitch);
-  const offset = new THREE.Vector3(Math.sin(yaw) * cp * distance, sp * distance, Math.cos(yaw) * cp * distance);
+  const offset = new THREE.Vector3(
+    Math.sin(yaw) * cp * distance,
+    sp * distance,
+    Math.cos(yaw) * cp * distance,
+  );
   camPos.copy(camTargetSmoothed).add(offset);
 
   if (camPosSmoothed.lengthSq() === 0) camPosSmoothed.copy(camPos);
@@ -2201,7 +2492,7 @@ stats.showPanel(0);
 document.body.appendChild(stats.dom);
 
 // ---------- Saved defaults (localStorage) ----------
-const DEFAULTS_KEY = 'openevt:defaults:v1';
+const DEFAULTS_KEY = "openevt:defaults:v1";
 type SavedDefaults = {
   settings?: Partial<typeof settings>;
   control?: Partial<typeof control>;
@@ -2210,13 +2501,18 @@ type SavedDefaults = {
   camera?: { distance?: number };
 };
 
-function applyPartial<T extends Record<string, unknown>>(target: T, source: unknown) {
-  if (!source || typeof source !== 'object') return;
+function applyPartial<T extends Record<string, unknown>>(
+  target: T,
+  source: unknown,
+) {
+  if (!source || typeof source !== "object") return;
   for (const [k, v] of Object.entries(source as Record<string, unknown>)) {
     if (!(k in target)) continue;
     const cur = target[k];
-    if (typeof cur === 'number' && typeof v === 'number' && Number.isFinite(v)) (target as any)[k] = v;
-    if (typeof cur === 'boolean' && typeof v === 'boolean') (target as any)[k] = v;
+    if (typeof cur === "number" && typeof v === "number" && Number.isFinite(v))
+      (target as any)[k] = v;
+    if (typeof cur === "boolean" && typeof v === "boolean")
+      (target as any)[k] = v;
   }
 }
 
@@ -2229,25 +2525,45 @@ function loadSavedDefaults() {
     applyPartial(settings as any, parsed.settings);
     applyPartial(control as any, parsed.control);
 
-    if (parsed.render?.exposure !== undefined && Number.isFinite(parsed.render.exposure)) {
-      renderer.toneMappingExposure = THREE.MathUtils.clamp(parsed.render.exposure, 0.6, 2.5);
+    if (
+      parsed.render?.exposure !== undefined &&
+      Number.isFinite(parsed.render.exposure)
+    ) {
+      renderer.toneMappingExposure = THREE.MathUtils.clamp(
+        parsed.render.exposure,
+        0.6,
+        2.5,
+      );
     }
-    if (parsed.lights?.hemi !== undefined && Number.isFinite(parsed.lights.hemi)) {
+    if (
+      parsed.lights?.hemi !== undefined &&
+      Number.isFinite(parsed.lights.hemi)
+    ) {
       hemi.intensity = THREE.MathUtils.clamp(parsed.lights.hemi, 0, 2.5);
     }
-    if (parsed.lights?.sun !== undefined && Number.isFinite(parsed.lights.sun)) {
+    if (
+      parsed.lights?.sun !== undefined &&
+      Number.isFinite(parsed.lights.sun)
+    ) {
       dirLight.intensity = THREE.MathUtils.clamp(parsed.lights.sun, 0, 3.5);
     }
-    if (parsed.camera?.distance !== undefined && Number.isFinite(parsed.camera.distance)) {
-      camDistance = THREE.MathUtils.clamp(parsed.camera.distance, camDistanceMin, camDistanceMax);
+    if (
+      parsed.camera?.distance !== undefined &&
+      Number.isFinite(parsed.camera.distance)
+    ) {
+      camDistance = THREE.MathUtils.clamp(
+        parsed.camera.distance,
+        camDistanceMin,
+        camDistanceMax,
+      );
     }
 
     syncFogRange();
     ensureChunksAround(chassisBody.position.x, chassisBody.position.z);
     processChunkBuildQueue(32);
-    console.log('[defaults] loaded');
+    console.log("[defaults] loaded");
   } catch (err) {
-    console.warn('[defaults] failed to load', err);
+    console.warn("[defaults] failed to load", err);
   }
 }
 
@@ -2267,89 +2583,91 @@ function saveDefaults() {
       dragCoeff: settings.dragCoeff,
       windSound: settings.windSound,
       windVolume: settings.windVolume,
-      engineVolume: settings.engineVolume
+      engineVolume: settings.engineVolume,
     },
     control: {
       maxForce: control.maxForce,
       maxSteer: control.maxSteer,
-      brakeForce: control.brakeForce
+      brakeForce: control.brakeForce,
     },
     render: {
-      exposure: renderer.toneMappingExposure
+      exposure: renderer.toneMappingExposure,
     },
     lights: {
       hemi: hemi.intensity,
-      sun: dirLight.intensity
+      sun: dirLight.intensity,
     },
     camera: {
-      distance: camDistance
-    }
+      distance: camDistance,
+    },
   };
   localStorage.setItem(DEFAULTS_KEY, JSON.stringify(payload));
-  console.log('[defaults] saved');
+  console.log("[defaults] saved");
 }
 
 loadSavedDefaults();
 
 const gui = new GUI({ width: 320 });
-gui.title('Sim');
+gui.title("Sim");
+gui.add(settings, "amplitude", 1, 60, 0.1).onFinishChange(() => {
+  reseedTerrain(seed);
+  ensureChunksAround(chassisBody.position.x, chassisBody.position.z);
+  processChunkBuildQueue(32);
+});
+gui.add(settings, "frequency", 0.002, 0.03, 0.001).onFinishChange(() => {
+  reseedTerrain(seed);
+  ensureChunksAround(chassisBody.position.x, chassisBody.position.z);
+  processChunkBuildQueue(32);
+});
 gui
-  .add(settings, 'amplitude', 1, 60, 0.1)
-  .onFinishChange(() => {
-    reseedTerrain(seed);
-    ensureChunksAround(chassisBody.position.x, chassisBody.position.z);
-    processChunkBuildQueue(32);
-  });
-gui
-  .add(settings, 'frequency', 0.002, 0.03, 0.001)
-  .onFinishChange(() => {
-    reseedTerrain(seed);
-    ensureChunksAround(chassisBody.position.x, chassisBody.position.z);
-    processChunkBuildQueue(32);
-  });
-gui
-  .add(settings, 'viewRadiusChunks', 1, 12, 1)
-  .name('Terrain Render Distance')
+  .add(settings, "viewRadiusChunks", 1, 12, 1)
+  .name("Terrain Render Distance")
   .onChange(() => {
     ensureChunksAround(chassisBody.position.x, chassisBody.position.z);
     syncFogRange();
   });
 
-gui.add(settings, 'fogAuto').name('Fog Auto').onChange(() => syncFogRange());
-gui.add(settings, 'fogEndMultiplier', 0.6, 2.0, 0.01).name('Fog End ×').onChange(() => syncFogRange());
 gui
-  .add(settings, 'fogNear', 0, 600, 1)
-  .name('Fog Near')
+  .add(settings, "fogAuto")
+  .name("Fog Auto")
+  .onChange(() => syncFogRange());
+gui
+  .add(settings, "fogEndMultiplier", 0.6, 2.0, 0.01)
+  .name("Fog End ×")
+  .onChange(() => syncFogRange());
+gui
+  .add(settings, "fogNear", 0, 600, 1)
+  .name("Fog Near")
   .onChange((v: number) => {
     settings.fogAuto = false;
     fog.near = v;
   });
 gui
-  .add(settings, 'fogFar', 200, 6000, 1)
-  .name('Fog Far')
+  .add(settings, "fogFar", 200, 6000, 1)
+  .name("Fog Far")
   .onChange((v: number) => {
     settings.fogAuto = false;
     fog.far = v;
   });
 
-gui.add(renderer, 'toneMappingExposure', 0.6, 2.0, 0.01).name('Exposure');
-gui.add(hemi, 'intensity', 0.1, 1.5, 0.01).name('Fill Light');
-gui.add(dirLight, 'intensity', 0.2, 2.5, 0.01).name('Sun Light');
+gui.add(renderer, "toneMappingExposure", 0.6, 2.0, 0.01).name("Exposure");
+gui.add(hemi, "intensity", 0.1, 1.5, 0.01).name("Fill Light");
+gui.add(dirLight, "intensity", 0.2, 2.5, 0.01).name("Sun Light");
 
-gui.add({ saveDefaults }, 'saveDefaults').name('Save Defaults');
+gui.add({ saveDefaults }, "saveDefaults").name("Save Defaults");
 
-const aeroFolder = gui.addFolder('Aero');
-aeroFolder.add(settings, 'dragCoeff', 0, 0.06, 0.001).name('Wind Drag');
-aeroFolder.add(settings, 'windSound').name('Wind Audio');
-aeroFolder.add(settings, 'windVolume', 0, 1.25, 0.01).name('Wind Volume');
+const aeroFolder = gui.addFolder("Aero");
+aeroFolder.add(settings, "dragCoeff", 0, 0.06, 0.001).name("Wind Drag");
+aeroFolder.add(settings, "windSound").name("Wind Audio");
+aeroFolder.add(settings, "windVolume", 0, 1.25, 0.01).name("Wind Volume");
 
-const audioFolder = gui.addFolder('Audio');
-audioFolder.add(settings, 'engineVolume', 0, 1.5, 0.01).name('Engine Volume');
-gui.add(control, 'maxForce', 800, 6000, 50);
-gui.add(control, 'maxSteer', 0.1, 0.7, 0.01);
+const audioFolder = gui.addFolder("Audio");
+audioFolder.add(settings, "engineVolume", 0, 1.5, 0.01).name("Engine Volume");
+gui.add(control, "maxForce", 800, 6000, 50);
+gui.add(control, "maxSteer", 0.1, 0.7, 0.01);
 
 // ---------- Resize ----------
-window.addEventListener('resize', () => {
+window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -2373,7 +2691,7 @@ function updateInterpolatedChassis(alpha: number) {
   chassisRenderPos.set(
     THREE.MathUtils.lerp(p0.x, p1.x, a),
     THREE.MathUtils.lerp(p0.y, p1.y, a),
-    THREE.MathUtils.lerp(p0.z, p1.z, a)
+    THREE.MathUtils.lerp(p0.z, p1.z, a),
   );
 
   const q0 = prevBodyQuat;
@@ -2392,7 +2710,11 @@ function syncVisuals() {
   chassisRoot.quaternion.copy(chassisRenderQuat);
   chassisRoot.position.copy(chassisRenderPos);
   // Keep the visible chassis aligned with the offset collision shape.
-  const visualOffset = new THREE.Vector3(0, chassisShapeOffsetY, 0).applyQuaternion(chassisRenderQuat);
+  const visualOffset = new THREE.Vector3(
+    0,
+    chassisShapeOffsetY,
+    0,
+  ).applyQuaternion(chassisRenderQuat);
   chassisRoot.position.add(visualOffset);
 
   for (let i = 0; i < vehicle.wheelInfos.length; i++) {
@@ -2417,7 +2739,11 @@ function animate() {
   for (const [, c] of chunks) {
     const start = c.mesh.userData.fadeInStart as number | undefined;
     if (!start) continue;
-    const t = THREE.MathUtils.clamp((now - start) / (chunkFadeSeconds * 1000), 0, 1);
+    const t = THREE.MathUtils.clamp(
+      (now - start) / (chunkFadeSeconds * 1000),
+      0,
+      1,
+    );
     const mat = c.mesh.material as unknown as THREE.Material;
     if ((mat as any).opacity !== undefined) {
       (mat as any).opacity = t;
@@ -2453,7 +2779,12 @@ function animate() {
       vehicle.updateWheelTransform(i);
       const t = vehicle.wheelInfos[i].worldTransform;
       currWheelPos[i].set(t.position.x, t.position.y, t.position.z);
-      currWheelQuat[i].set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
+      currWheelQuat[i].set(
+        t.quaternion.x,
+        t.quaternion.y,
+        t.quaternion.z,
+        t.quaternion.w,
+      );
     }
 
     accumulator -= fixedTimeStep;
@@ -2471,13 +2802,17 @@ function animate() {
   sky.position.copy(camera.position);
 
   // keep sun direction roughly consistent
-  dirLight.target.position.set(chassisRenderPos.x, chassisRenderPos.y, chassisRenderPos.z);
+  dirLight.target.position.set(
+    chassisRenderPos.x,
+    chassisRenderPos.y,
+    chassisRenderPos.z,
+  );
   // Follow the vehicle with the shadow frustum to keep shadows visible and crisp.
   sunDir.copy(sun).normalize();
   dirLight.position.set(
     chassisRenderPos.x + sunDir.x * 140,
     chassisRenderPos.y + sunDir.y * 140 + 30,
-    chassisRenderPos.z + sunDir.z * 140
+    chassisRenderPos.z + sunDir.z * 140,
   );
   scene.add(dirLight.target);
 
