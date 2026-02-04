@@ -1243,11 +1243,7 @@ const rearWellZ = -chassisSize.z * 0.28;
 // Load the user-provided Chevy Suburban OBJ/MTL and swap it in as the vehicle shell.
 // Keeps the physics and existing wheel meshes; tries to hide any wheels that are part of the OBJ.
 const modelBaseUrl = `${import.meta.env.BASE_URL}models/chevy-suburban/`;
-void loadObjWithMtl(
-  modelBaseUrl,
-  "chevy_suburban.obj",
-  "chevy_suburban.mtl",
-)
+void loadObjWithMtl(modelBaseUrl, "chevy_suburban.obj", "chevy_suburban.mtl")
   .then((obj) => {
     setModelShadowsAndColorSpace(obj);
     sanitizeObjMaterials(obj);
