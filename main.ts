@@ -397,6 +397,180 @@ const camera = new THREE.PerspectiveCamera(
 );
 camera.position.set(0, 6, 14);
 
+// ---------- EVT overlay (second canvas) ----------
+type EvtOverlayMode = "700R4" | "OpenEVT";
+
+const evtOverlaySettings = {
+  enabled: true,
+  mode: "700R4" as EvtOverlayMode,
+  opacity: 0.9,
+  scale: 1.0,
+};
+
+class EvtOverlay {
+  private renderer: THREE.WebGLRenderer;
+  private scene = new THREE.Scene();
+  private camera: THREE.OrthographicCamera;
+  private group700: THREE.Group;
+  private groupEvt: THREE.Group;
+  private rotors700: Array<{ obj: THREE.Object3D; ratio: number }> = [];
+  private rotorsEvt: Array<{ obj: THREE.Object3D; ratio: number }> = [];
+  private materials: THREE.Material[] = [];
+  private currentMode: EvtOverlayMode = "700R4";
+
+  constructor(parent: HTMLElement) {
+    const canvas = document.createElement("canvas");
+    canvas.style.position = "absolute";
+    canvas.style.inset = "0";
+    canvas.style.pointerEvents = "none";
+    canvas.style.zIndex = "2";
+    parent.style.position = parent.style.position || "relative";
+    parent.appendChild(canvas);
+
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: true,
+    });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setClearAlpha(0);
+
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10);
+    this.camera.position.set(0, 0, 2);
+
+    this.group700 = this.build700R4Group();
+    this.groupEvt = this.buildEvtGroup();
+
+    this.scene.add(this.group700, this.groupEvt);
+    this.setMode(this.currentMode);
+  }
+
+  private registerMaterial(mat: THREE.Material) {
+    this.materials.push(mat);
+    return mat;
+  }
+
+  private buildGear(radius: number, thickness: number, color: number) {
+    const geo = new THREE.CylinderGeometry(radius, radius, thickness, 28, 1);
+    const mat = this.registerMaterial(
+      new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.65,
+        roughness: 0.35,
+        transparent: true,
+        opacity: evtOverlaySettings.opacity,
+      }),
+    );
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = Math.PI / 2;
+    return mesh;
+  }
+
+  private buildShaft(length: number, radius: number, color: number) {
+    const geo = new THREE.CylinderGeometry(radius, radius, length, 16, 1);
+    const mat = this.registerMaterial(
+      new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.55,
+        roughness: 0.45,
+        transparent: true,
+        opacity: evtOverlaySettings.opacity,
+      }),
+    );
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = Math.PI / 2;
+    return mesh;
+  }
+
+  private build700R4Group() {
+    const g = new THREE.Group();
+
+    const shaft = this.buildShaft(1.9, 0.06, 0x8aa6bf);
+    g.add(shaft);
+
+    const gearA = this.buildGear(0.34, 0.12, 0x5bb1ff);
+    const gearB = this.buildGear(0.25, 0.1, 0xffa45b);
+    const gearC = this.buildGear(0.18, 0.08, 0x9cff72);
+    gearA.position.set(-0.45, 0, 0);
+    gearB.position.set(0, 0, 0);
+    gearC.position.set(0.45, 0, 0);
+    g.add(gearA, gearB, gearC);
+
+    this.rotors700 = [
+      { obj: gearA, ratio: 0.8 },
+      { obj: gearB, ratio: -1.1 },
+      { obj: gearC, ratio: 1.6 },
+    ];
+    g.scale.setScalar(0.85);
+    g.position.set(0, -0.55, 0);
+    return g;
+  }
+
+  private buildEvtGroup() {
+    const g = new THREE.Group();
+
+    const engine = this.buildGear(0.32, 0.12, 0xffd166);
+    const generator = this.buildGear(0.24, 0.1, 0x06d6a0);
+    const motor = this.buildGear(0.34, 0.12, 0x118ab2);
+    const shaft = this.buildShaft(2.1, 0.05, 0xb4c6d9);
+
+    engine.position.set(-0.55, 0, 0);
+    generator.position.set(0, 0, 0);
+    motor.position.set(0.6, 0, 0);
+
+    g.add(shaft, engine, generator, motor);
+    this.rotorsEvt = [
+      { obj: engine, ratio: 1.0 },
+      { obj: generator, ratio: -1.4 },
+      { obj: motor, ratio: 1.2 },
+    ];
+    g.scale.setScalar(0.85);
+    g.position.set(0, -0.55, 0);
+    return g;
+  }
+
+  setMode(mode: EvtOverlayMode) {
+    this.currentMode = mode;
+    this.group700.visible = mode === "700R4";
+    this.groupEvt.visible = mode === "OpenEVT";
+  }
+
+  setOpacity(opacity: number) {
+    for (const m of this.materials) {
+      (m as any).opacity = opacity;
+      (m as any).transparent = opacity < 1;
+      m.needsUpdate = true;
+    }
+  }
+
+  resize(width: number, height: number) {
+    this.renderer.setSize(width, height, false);
+    const aspect = width / Math.max(1, height);
+    const size = 1.2;
+    this.camera.left = -size * aspect;
+    this.camera.right = size * aspect;
+    this.camera.top = size;
+    this.camera.bottom = -size;
+    this.camera.updateProjectionMatrix();
+  }
+
+  update(dt: number, shaftSpeed: number) {
+    const target = this.currentMode === "700R4" ? this.rotors700 : this.rotorsEvt;
+    for (const r of target) {
+      r.obj.rotation.z += dt * shaftSpeed * r.ratio;
+    }
+  }
+
+  render() {
+    if (!evtOverlaySettings.enabled) return;
+    this.renderer.render(this.scene, this.camera);
+  }
+}
+
+const appEl = document.querySelector<HTMLElement>("#app");
+if (!appEl) throw new Error("Missing #app element");
+const evtOverlay = new EvtOverlay(appEl);
+
 // Sky + Sun
 const sky = new Sky();
 // Keep the sky within the camera far plane; we'll re-center it on the camera each frame.
