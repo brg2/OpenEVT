@@ -1840,9 +1840,7 @@ const rimTemplate = make5SpokeRim(wheelRadius, wheelWidth);
 const wheelMeshes: THREE.Object3D[] = [];
 const proceduralWheelVisuals: THREE.Object3D[] = [];
 
-// Wheel render interpolation state (prev/current -> interpolated each frame)
-const prevWheelPos: THREE.Vector3[] = [];
-const prevWheelQuat: THREE.Quaternion[] = [];
+// Wheel render state (current physics snapshot)
 const currWheelPos: THREE.Vector3[] = [];
 const currWheelQuat: THREE.Quaternion[] = [];
 const wheelRenderPos: THREE.Vector3[] = [];
@@ -1859,20 +1857,10 @@ function initWheelInterpolation() {
       t.quaternion.z,
       t.quaternion.w,
     );
-    prevWheelPos[i] = p.clone();
     currWheelPos[i] = p.clone();
     wheelRenderPos[i] = p.clone();
-    prevWheelQuat[i] = q.clone();
     currWheelQuat[i] = q.clone();
     wheelRenderQuat[i] = q.clone();
-  }
-}
-
-function updateInterpolatedWheels(alpha: number) {
-  const a = THREE.MathUtils.clamp(alpha, 0, 1);
-  for (let i = 0; i < wheelMeshes.length; i++) {
-    wheelRenderPos[i].copy(prevWheelPos[i]).lerp(currWheelPos[i], a);
-    wheelRenderQuat[i].copy(prevWheelQuat[i]).slerp(currWheelQuat[i], a);
   }
 }
 
@@ -2536,7 +2524,7 @@ const camTarget = new THREE.Vector3();
 const camPos = new THREE.Vector3();
 const sunDir = new THREE.Vector3();
 
-// Rendered/interpolated chassis transform (avoids jitter between physics steps)
+// Rendered chassis transform (direct physics snapshot)
 const chassisRenderPos = new THREE.Vector3();
 const chassisRenderQuat = new THREE.Quaternion();
 
@@ -2850,32 +2838,18 @@ let accumulator = 0;
 const fixedTimeStep = 1 / 60;
 const maxSubSteps = 4;
 
-const prevBodyPos = new CANNON.Vec3();
-const prevBodyQuat = new CANNON.Quaternion();
-const tmpPrevQuat3 = new THREE.Quaternion();
-const tmpCurrQuat3 = new THREE.Quaternion();
-
-function updateInterpolatedChassis(alpha: number) {
-  const a = THREE.MathUtils.clamp(alpha, 0, 1);
-  const p0 = prevBodyPos;
-  const p1 = chassisBody.position;
-  chassisRenderPos.set(
-    THREE.MathUtils.lerp(p0.x, p1.x, a),
-    THREE.MathUtils.lerp(p0.y, p1.y, a),
-    THREE.MathUtils.lerp(p0.z, p1.z, a),
-  );
-
-  const q0 = prevBodyQuat;
-  const q1 = chassisBody.quaternion;
-  tmpPrevQuat3.set(q0.x, q0.y, q0.z, q0.w);
-  tmpCurrQuat3.set(q1.x, q1.y, q1.z, q1.w);
-  chassisRenderQuat.copy(tmpPrevQuat3).slerp(tmpCurrQuat3, a);
-}
-
-// Init interpolation state.
-prevBodyPos.copy(chassisBody.position);
-prevBodyQuat.copy(chassisBody.quaternion);
-updateInterpolatedChassis(1);
+// Init render state.
+chassisRenderPos.set(
+  chassisBody.position.x,
+  chassisBody.position.y,
+  chassisBody.position.z,
+);
+chassisRenderQuat.set(
+  chassisBody.quaternion.x,
+  chassisBody.quaternion.y,
+  chassisBody.quaternion.z,
+  chassisBody.quaternion.w,
+);
 
 function syncVisuals() {
   chassisRoot.quaternion.copy(chassisRenderQuat);
@@ -2932,16 +2906,6 @@ function animate() {
   accumulator += dt;
   let subSteps = 0;
   while (accumulator >= fixedTimeStep && subSteps < maxSubSteps) {
-    // Track previous state for interpolation.
-    prevBodyPos.copy(chassisBody.position);
-    prevBodyQuat.copy(chassisBody.quaternion);
-
-    // Wheel prev snapshot is just the last curr snapshot.
-    for (let i = 0; i < wheelMeshes.length; i++) {
-      prevWheelPos[i].copy(currWheelPos[i]);
-      prevWheelQuat[i].copy(currWheelQuat[i]);
-    }
-
     applyAeroDrag();
     world.step(fixedTimeStep);
 
@@ -2962,9 +2926,22 @@ function animate() {
     subSteps++;
   }
 
-  // Interpolate rendered transform between last two physics states.
-  updateInterpolatedChassis(accumulator / fixedTimeStep);
-  updateInterpolatedWheels(accumulator / fixedTimeStep);
+  // Render directly from the latest physics state (no interpolation/compensation).
+  chassisRenderPos.set(
+    chassisBody.position.x,
+    chassisBody.position.y,
+    chassisBody.position.z,
+  );
+  chassisRenderQuat.set(
+    chassisBody.quaternion.x,
+    chassisBody.quaternion.y,
+    chassisBody.quaternion.z,
+    chassisBody.quaternion.w,
+  );
+  for (let i = 0; i < wheelMeshes.length; i++) {
+    wheelRenderPos[i].copy(currWheelPos[i]);
+    wheelRenderQuat[i].copy(currWheelQuat[i]);
+  }
 
   syncVisuals();
   updateCamera(dt);
