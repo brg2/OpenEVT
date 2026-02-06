@@ -1,33 +1,35 @@
 import type { SimConfig, SimInputs, SimState } from "./types";
-import { clamp, rpmShape, toMps } from "./utils";
-
-export interface DerivedInputs {
-  demandMode: "manual" | "power" | "speed";
-  powerDemandKw: number;
-  speedTargetMps: number;
-}
+import { clamp, rpmShape } from "./utils";
 
 const V_EPS = 1.0;
 const RHO = 1.225;
 
 export const createInitialState = (config: SimConfig): SimState => {
   const rpm = config.engine.idleRpm;
+  const delaySteps = Math.max(1, Math.round(config.generator.responseTimeSec / 0.05));
   return {
     timeSec: 0,
     vMps: 0,
+    wheelRpm: 0,
+    motorRpm: 0,
+    genRpm: 0,
     aMps2: 0,
     distanceM: 0,
     rpm,
+    regenActive: false,
     soc: config.battery.initialSoc,
     vBus: config.battery.vNom,
     pWheelsReqKw: 0,
+    pWheelsCmdKw: 0,
     pWheelsKw: 0,
     pTracElecKw: 0,
     pGenElecKw: 0,
     pBattKw: 0,
     pEngMechKw: 0,
-    pGenCmdKw: 0,
-    piIntegral: 0,
+    fuelRateGph: 0,
+    genDelayBuffer: new Array(delaySteps).fill(0),
+    genDelaySteps: delaySteps,
+    prevTps: 0,
     limiter: {
       tracPower: false,
       battDischarge: false,
@@ -56,7 +58,6 @@ export const step = (
   state: SimState,
   inputs: SimInputs,
   config: SimConfig,
-  derived: DerivedInputs,
   dt: number,
 ): SimState => {
   const next: SimState = {
@@ -72,79 +73,141 @@ export const step = (
 
   next.timeSec = state.timeSec + dt;
 
-  const { vehicle, battery, engine, generator, bus, driver } = config;
+  const { vehicle, battery, engine, generator, bus } = config;
 
   const gradeRad = Math.atan(inputs.gradePct / 100);
   const v = state.vMps;
   const vEff = Math.max(v, V_EPS);
+  const tireDiameterM = (vehicle.tireDiameterIn * 0.0254) || 0.7;
+  const wheelCirc = Math.max(0.01, Math.PI * tireDiameterM);
   const fDrag = 0.5 * RHO * vehicle.cdA * v * v;
   const fRoll = vehicle.cr * vehicle.massKg * 9.81;
   const fGrade = vehicle.massKg * 9.81 * Math.sin(gradeRad);
 
-  let pWheelsReqKw = 0;
-  let piIntegral = state.piIntegral;
+  const pWheelsMaxKw = vehicle.motorPeakPowerKw * vehicle.drivetrainEff;
+  let pWheelsReqKw = clamp(inputs.aps, 0, 1) * pWheelsMaxKw;
 
-  if (derived.demandMode === "speed") {
-    const error = derived.speedTargetMps - v;
-    piIntegral += error * dt;
-    const fReq = driver.kp * error + driver.ki * piIntegral + fDrag + fRoll + fGrade;
-    pWheelsReqKw = clamp((fReq * vEff) / 1000, 0, vehicle.wheelPowerMaxKw);
-  } else if (derived.demandMode === "power") {
-    pWheelsReqKw = clamp(derived.powerDemandKw, 0, vehicle.wheelPowerMaxKw);
-  } else {
-    pWheelsReqKw = clamp(inputs.aps, 0, 1) * vehicle.wheelPowerMaxKw;
+  // One-pedal regen: as TPS lifts, regen increases proportional to (1 - TPS) and speed,
+  // and is disabled above regenMaxSoc to avoid overcharge.
+  next.regenActive = false;
+  const tpsEff0 = clamp(inputs.tps, 0, 1);
+  if (v > 0.5) {
+    const regenSocMax = Math.min(
+      battery.socMax,
+      Number.isFinite(vehicle.regenMaxSoc) ? vehicle.regenMaxSoc : battery.socMax,
+    );
+    const socHeadroom = clamp(
+      (regenSocMax - state.soc) / Math.max(0.01, regenSocMax - battery.socMin),
+      0,
+      1,
+    );
+    const speedFactor = clamp(v / 15, 0, 1);
+    const tpsFactor = clamp(1 - tpsEff0, 0, 1);
+    const regenKw = vehicle.regenMaxKw * tpsFactor * speedFactor * socHeadroom;
+    if (regenKw > 0) {
+      pWheelsReqKw = clamp(pWheelsReqKw - regenKw, -vehicle.regenMaxKw, pWheelsMaxKw);
+      next.regenActive = true;
+    }
   }
 
   next.pWheelsReqKw = pWheelsReqKw;
-  next.piIntegral = piIntegral;
+  next.prevTps = tpsEff0;
 
-  let rpmTarget = engine.idleRpm + clamp(inputs.tps, 0, 1) * (engine.redlineRpm - engine.idleRpm);
-  if (config.mode === "pro" && config.theater.enabled) {
-    const t = next.timeSec % config.theater.shiftPeriodSec;
-    if (t < 1.2) rpmTarget += config.theater.shiftMagnitudeRpm * (1 - t / 1.2);
-  }
+  const pWheelsCmdKw = pWheelsReqKw;
+  next.pWheelsCmdKw = pWheelsCmdKw;
+
+  const tpsEff = tpsEff0;
+  let rpmTarget = engine.idleRpm + tpsEff * (engine.redlineRpm - engine.idleRpm);
 
   const rpm = state.rpm + ((rpmTarget - state.rpm) * dt) / Math.max(0.1, engine.rpmTimeConst);
   next.rpm = rpm;
 
   const g = clamp(rpmShape(rpm, engine.idleRpm, engine.redlineRpm), 0, 1.1);
-  const pEngAvailKw = clamp(inputs.tps, 0, 1) * engine.maxPowerKw * g;
+  const pEngAvailKw = tpsEff * engine.maxPowerKw * g;
 
-  let pGenCmdKw = state.pGenCmdKw;
-  const pTracElecReqKw = pWheelsReqKw / Math.max(0.01, vehicle.drivetrainEff);
+  let pTracElecReqKw = pWheelsCmdKw / Math.max(0.01, vehicle.drivetrainEff);
 
-  if (config.mode === "pro") {
-    const band = battery.socTargetBand;
-    const low = battery.socTarget - band;
-    const high = battery.socTarget + band;
-    let target = pTracElecReqKw;
-    if (state.soc < low) target = generator.maxElecKw;
-    if (state.soc > high) target = 0;
-    const ramp = generator.proRampKwPerS * dt;
-    if (target > pGenCmdKw) pGenCmdKw = Math.min(pGenCmdKw + ramp, target);
-    else pGenCmdKw = Math.max(pGenCmdKw - ramp, target);
-    pGenCmdKw = clamp(pGenCmdKw, 0, generator.maxElecKw);
+  // Soft taper near motor max RPM (ratios + tire determine max wheel speed).
+  const wheelRpmNow = (v / wheelCirc) * 60;
+  const motorRpmNow = wheelRpmNow * vehicle.tractionReduction * vehicle.diffRatio;
+  const rpmLimit = Math.max(1, vehicle.motorMaxRpm);
+  const rpmSoftStart = rpmLimit * 0.95;
+  if (motorRpmNow > rpmSoftStart) {
+    const scale = clamp((rpmLimit - motorRpmNow) / Math.max(1, rpmLimit - rpmSoftStart), 0, 1);
+    if (scale < 1) {
+      pTracElecReqKw *= scale;
+      pWheelsReqKw = pTracElecReqKw * vehicle.drivetrainEff;
+      next.pWheelsReqKw = pWheelsReqKw;
+      next.limiter.tracPower = true;
+    }
   }
 
   const pGenMaxKw = Math.min(generator.maxElecKw, pEngAvailKw * generator.eff);
   let pGenElecKw = 0;
+  let pGenElecRawKw = 0;
 
-  if (config.mode === "base") {
-    const chargeHeadroom = state.soc < battery.socMax ? battery.maxChargeKw : 0;
-    const demand = pTracElecReqKw + chargeHeadroom;
-    pGenElecKw = clamp(Math.min(pGenMaxKw, demand), 0, pGenMaxKw);
-  } else {
-    pGenElecKw = clamp(Math.min(pGenCmdKw, pGenMaxKw), 0, pGenMaxKw);
+  // In Basic mode, traction is capped so generator retains a proportional SOC reserve.
+  // Example: SOC 0.2, target 0.5 => scale 0.4 => traction <= 40% of gen potential.
+  let socErrorFrac = 0;
+  if (config.mode === "basic") {
+    const target = Math.max(0.01, battery.socTarget);
+    const scale = clamp(state.soc / target, 0, 1.5);
+    socErrorFrac = 1 - scale;
+    if (Math.abs(scale - 1) > 0.01) next.limiter.tracPower = true;
+    // Cap traction against generator capability so SOC can charge or discharge toward target.
+    const maxTracBySoc = pGenMaxKw * scale;
+    if (pTracElecReqKw > maxTracBySoc) {
+      pTracElecReqKw = maxTracBySoc;
+      pWheelsReqKw = pTracElecReqKw * vehicle.drivetrainEff;
+      next.pWheelsReqKw = pWheelsReqKw;
+    }
   }
+
+  const chargeHeadroom = clamp(pGenMaxKw * socErrorFrac, -pGenMaxKw, pGenMaxKw);
+  const demand = pTracElecReqKw + chargeHeadroom;
+  pGenElecRawKw = clamp(Math.min(pGenMaxKw, demand), 0, pGenMaxKw);
+
+  const delaySteps = Math.max(
+    1,
+    Math.round(
+      clamp(
+        Number.isFinite(generator.responseTimeSec) ? generator.responseTimeSec : 2.5,
+        0,
+        10,
+      ) / dt,
+    ),
+  );
+  let delayBuffer = state.genDelayBuffer.slice();
+  if (state.genDelaySteps !== delaySteps || delayBuffer.length !== delaySteps) {
+    delayBuffer = new Array(delaySteps).fill(state.pGenElecKw);
+  }
+  delayBuffer.push(pGenElecRawKw);
+  pGenElecKw = delayBuffer.shift() ?? pGenElecRawKw;
+  next.genDelayBuffer = delayBuffer;
+  next.genDelaySteps = delaySteps;
 
   let pBattKw = pTracElecReqKw - pGenElecKw;
 
-  if (pBattKw > battery.maxDischargeKw) {
-    pBattKw = battery.maxDischargeKw;
+  const socSpan = Math.max(0.02, battery.socMax - battery.socMin);
+  const socDischargeFrac = clamp(
+    (state.soc - battery.socMin) / socSpan,
+    0,
+    1,
+  );
+  const socChargeFrac = clamp(
+    (battery.socMax - state.soc) / socSpan,
+    0,
+    1,
+  );
+  const maxDischargeKw = battery.maxDischargeKw * socDischargeFrac;
+  const maxChargeKw = battery.maxChargeKw * socChargeFrac;
+
+  if (pBattKw > maxDischargeKw) {
+    pBattKw = maxDischargeKw;
     next.limiter.battDischarge = true;
   }
-  if (pBattKw < -battery.maxChargeKw) {
-    pBattKw = -battery.maxChargeKw;
+  if (pBattKw < -maxChargeKw) {
+    pBattKw = -maxChargeKw;
     next.limiter.battCharge = true;
   }
 
@@ -160,7 +223,7 @@ export const step = (
 
   const iMaxCharge = (bus.vMax - battery.vNom) / Math.max(0.001, battery.rInt);
   const pBattMinOv = -(iMaxCharge * battery.vNom) / 1000;
-  if (pBattKw < pBattMinOv) {
+  if (pBattKw < pBattMinOv && vBus > bus.vMax + 2) {
     pBattKw = pBattMinOv;
     next.limiter.busOv = true;
   }
@@ -169,27 +232,38 @@ export const step = (
   next.vBus = clamp(vBus, bus.vMin, bus.vMax);
 
   let pTracElecKw = pGenElecKw + pBattKw;
-  if (pTracElecKw > pTracElecReqKw + 0.01) {
+  if (pTracElecKw > pTracElecReqKw + 0.01 && vBus > bus.vMax + 2) {
     pGenElecKw = Math.max(0, pTracElecReqKw - pBattKw);
     pTracElecKw = pGenElecKw + pBattKw;
     next.limiter.busOv = true;
   }
 
   const pWheelsKw = pTracElecKw * vehicle.drivetrainEff;
-  next.pWheelsKw = Math.max(0, pWheelsKw);
-  next.pTracElecKw = Math.max(0, pTracElecKw);
+  next.pWheelsKw = pWheelsKw;
+  next.pTracElecKw = pTracElecKw;
   next.pGenElecKw = Math.max(0, pGenElecKw);
   next.pBattKw = pBattKw;
   next.pEngMechKw = pGenElecKw / Math.max(0.01, generator.eff);
-  next.pGenCmdKw = pGenCmdKw;
+  next.fuelRateGph =
+    (next.pEngMechKw / Math.max(0.05, engine.engineEff)) /
+    Math.max(1e-6, engine.fuelKwhPerGallon);
 
   if (next.pWheelsKw < pWheelsReqKw - 0.5) next.limiter.tracPower = true;
 
+  const isRegen = next.pWheelsKw < 0;
   const fTrac = (next.pWheelsKw * 1000) / vEff;
-  const netForce = fTrac - (fDrag + fRoll + fGrade);
+  const regenForceGain = Number.isFinite(vehicle.regenForceGain)
+    ? vehicle.regenForceGain
+    : 1;
+  const regenForce = isRegen ? Math.abs(fTrac) * regenForceGain : 0;
+  const netForce = fTrac - (fDrag + fRoll + fGrade) - regenForce;
   const a = netForce / vehicle.massKg;
   const vNext = Math.max(0, v + a * dt);
   next.vMps = vNext;
+  const wheelRpm = (vNext / wheelCirc) * 60;
+  next.wheelRpm = wheelRpm;
+  next.motorRpm = wheelRpm * vehicle.tractionReduction * vehicle.diffRatio;
+  next.genRpm = rpm * generator.stepUpRatio;
   next.aMps2 = a;
   next.distanceM = state.distanceM + vNext * dt;
 

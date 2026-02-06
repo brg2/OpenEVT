@@ -67,6 +67,10 @@ body {
   box-shadow: 0 10px 30px var(--shadow);
 }
 
+.panel.chart-grid {
+  align-self: start;
+}
+
 .panel h2 {
   margin: 0 0 8px 0;
   font-size: 14px;
@@ -170,11 +174,12 @@ button:disabled {
 
 .chart-grid {
   display: grid;
-  gap: 12px;
+  gap: 6px;
+  align-content: start;
 }
 
 .chart {
-  height: 120px;
+  height: 88px;
   background: #0b111a;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.05);

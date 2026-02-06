@@ -1,13 +1,6 @@
 import { defaultConfig, defaultInputs } from "../sim/defaults";
 import { createInitialState, step } from "../sim/step";
-import { scenarioAt } from "../sim/scenarios";
-import type {
-  ExportPayload,
-  ScriptedPoint,
-  SimConfig,
-  SimInputs,
-  SimState,
-} from "../sim/types";
+import type { ExportPayload, ScriptedPoint, SimConfig, SimInputs, SimState } from "../sim/types";
 
 const DT = 0.05;
 
@@ -25,7 +18,6 @@ let recording = false;
 let recordedInputs: ScriptedPoint[] = [];
 let replaying = false;
 let replayStart = 0;
-let scriptedInputs: ScriptedPoint[] = [];
 
 const sampleSeries = (series: ScriptedPoint[], t: number): ScriptedPoint => {
   if (series.length === 0) return { t, aps: inputs.aps, tps: inputs.tps };
@@ -94,29 +86,9 @@ const tick = () => {
           gradePct: sample.gradePct ?? inputs.gradePct,
         };
       }
-    } else if (inputs.scenario === "scripted" && scriptedInputs.length > 0) {
-      const sample = sampleSeries(scriptedInputs, state.timeSec);
-      effectiveInputs = {
-        ...inputs,
-        aps: sample.aps,
-        tps: sample.tps,
-        gradePct: sample.gradePct ?? inputs.gradePct,
-      };
     }
 
-    const scenario = scenarioAt(effectiveInputs.scenario, state.timeSec, config);
-    const derived = {
-      demandMode:
-        scenario.mode === "speed"
-          ? "speed"
-          : scenario.mode === "power"
-            ? "power"
-            : "manual",
-      powerDemandKw: scenario.powerKw,
-      speedTargetMps: scenario.speedTargetMps,
-    };
-
-    state = step(state, effectiveInputs, config, derived, DT);
+    state = step(state, effectiveInputs, config, DT);
 
     if (recording) {
       recordedInputs.push({
@@ -165,12 +137,9 @@ self.onmessage = (event: MessageEvent) => {
       if (data.config?.engine) config.engine = { ...config.engine, ...data.config.engine };
       if (data.config?.generator) config.generator = { ...config.generator, ...data.config.generator };
       if (data.config?.bus) config.bus = { ...config.bus, ...data.config.bus };
-      if (data.config?.driver) config.driver = { ...config.driver, ...data.config.driver };
-      if (data.config?.scenario) config.scenario = { ...config.scenario, ...data.config.scenario };
-      if (data.config?.theater) config.theater = { ...config.theater, ...data.config.theater };
       break;
     case "setMode":
-      config = { ...config, mode: data.mode };
+      config = { ...config, mode: "basic" };
       break;
     case "reset":
       resetState();
@@ -190,9 +159,6 @@ self.onmessage = (event: MessageEvent) => {
       break;
     case "stopReplay":
       replaying = false;
-      break;
-    case "loadScriptedInputs":
-      scriptedInputs = Array.isArray(data.inputs) ? data.inputs : [];
       break;
     case "requestExport": {
       const payload: ExportPayload = {

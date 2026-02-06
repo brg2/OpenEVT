@@ -38,7 +38,7 @@ const Diagram: React.FC<DiagramProps> = ({ state, config }) => {
           ICE Engine
         </text>
         <text x="60" y="105" fill="#7f92a6" fontSize="13">
-          TPS → {Math.round((state?.rpm ?? 0))} rpm
+          Accelerator → {Math.round((state?.rpm ?? 0))} rpm
         </text>
 
         <rect x="300" y="40" width="200" height="90" rx="16" fill="url(#node)" stroke="#2a3647" />
@@ -46,7 +46,7 @@ const Diagram: React.FC<DiagramProps> = ({ state, config }) => {
           Generator
         </text>
         <text x="320" y="105" fill="#7f92a6" fontSize="13">
-          {config.mode === "base" ? "Rectifier" : "Inverter"}
+          Rectifier
         </text>
 
         <rect x="560" y="40" width="200" height="90" rx="16" fill="url(#node)" stroke="#2a3647" />
@@ -143,7 +143,6 @@ const Diagram: React.FC<DiagramProps> = ({ state, config }) => {
       </svg>
 
       <div style={{ position: "absolute", top: 16, right: 16, display: "grid", gap: 6 }}>
-        {limiter?.tracPower && <span className="badge warn">Traction Limited</span>}
         {limiter?.battDischarge && (
           <span className="badge warn">Battery Discharge Limit</span>
         )}

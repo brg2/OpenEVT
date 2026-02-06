@@ -1,26 +1,9 @@
-export type Mode = "base" | "pro";
-
-export type ScenarioType =
-  | "manual"
-  | "constant-speed"
-  | "step-power"
-  | "sine-power"
-  | "i70-climb"
-  | "scripted";
+export type Mode = "basic";
 
 export interface SimInputs {
   aps: number;
   tps: number;
   gradePct: number;
-  scenario: ScenarioType;
-}
-
-export interface ScenarioConfig {
-  type: ScenarioType;
-  stepPowerKw: number;
-  sinePowerKw: number;
-  sinePeriodSec: number;
-  i70ProfileKw: number[];
 }
 
 export interface SimConfig {
@@ -30,10 +13,14 @@ export interface SimConfig {
     cdA: number;
     cr: number;
     drivetrainEff: number;
-    wheelRadiusM: number;
-    wheelPowerMaxKw: number;
-    speedTargetMph: number;
-    gradePct: number;
+    tireDiameterIn: number;
+    tractionReduction: number;
+    diffRatio: number;
+    motorPeakPowerKw: number;
+    motorMaxRpm: number;
+    regenMaxKw: number;
+    regenForceGain: number;
+    regenMaxSoc: number;
   };
   battery: {
     capacityKwh: number;
@@ -59,20 +46,12 @@ export interface SimConfig {
     maxElecKw: number;
     eff: number;
     proRampKwPerS: number;
+    responseTimeSec: number;
+    stepUpRatio: number;
   };
   bus: {
     vMin: number;
     vMax: number;
-  };
-  driver: {
-    kp: number;
-    ki: number;
-  };
-  scenario: ScenarioConfig;
-  theater: {
-    enabled: boolean;
-    shiftPeriodSec: number;
-    shiftMagnitudeRpm: number;
   };
 }
 
@@ -103,19 +82,26 @@ export interface LimiterTime {
 export interface SimState {
   timeSec: number;
   vMps: number;
+  wheelRpm: number;
+  motorRpm: number;
+  genRpm: number;
   aMps2: number;
   distanceM: number;
   rpm: number;
+  regenActive: boolean;
   soc: number;
   vBus: number;
   pWheelsReqKw: number;
+  pWheelsCmdKw: number;
   pWheelsKw: number;
   pTracElecKw: number;
   pGenElecKw: number;
   pBattKw: number;
   pEngMechKw: number;
-  pGenCmdKw: number;
-  piIntegral: number;
+  fuelRateGph: number;
+  genDelayBuffer: number[];
+  genDelaySteps: number;
+  prevTps: number;
   limiter: LimiterFlags;
   limiterTime: LimiterTime;
   energy: EnergyStats;
