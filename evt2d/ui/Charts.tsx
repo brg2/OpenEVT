@@ -16,7 +16,7 @@ interface HistoryBuffer {
 interface ChartsProps {
   history: HistoryBuffer;
   tick: number;
-  tractionMaxKw: number;
+  sweetSpotKw: number;
   busMin: number;
   busMax: number;
 }
@@ -147,9 +147,16 @@ const ChartCard: React.FC<{
     canvas.height = rect.height * devicePixelRatio;
     const dataMin = safeValues.length ? Math.min(...safeValues) : 0;
     const dataMax = safeValues.length ? Math.max(...safeValues) : 1;
-    const pad = Math.max(1, (dataMax - dataMin) * 0.1);
-    const resolvedMin = typeof min === "number" ? min : dataMin - pad;
-    const resolvedMax = typeof max === "number" ? max : dataMax + pad;
+    const extra: number[] = [];
+    if (typeof target === "number") extra.push(target);
+    if (band) extra.push(band.min, band.max);
+    const extraMin = extra.length ? Math.min(...extra) : dataMin;
+    const extraMax = extra.length ? Math.max(...extra) : dataMax;
+    const rawMin = Math.min(dataMin, extraMin);
+    const rawMax = Math.max(dataMax, extraMax);
+    const pad = Math.max(1, (rawMax - rawMin) * 0.1);
+    const resolvedMin = typeof min === "number" ? min : rawMin - pad;
+    const resolvedMax = typeof max === "number" ? max : rawMax + pad;
     drawLine(
       canvas,
       safeValues,
@@ -196,7 +203,7 @@ const ChartCard: React.FC<{
 const Charts: React.FC<ChartsProps> = ({
   history,
   tick,
-  tractionMaxKw,
+  sweetSpotKw,
   busMin,
   busMax,
 }) => {
@@ -278,7 +285,6 @@ const Charts: React.FC<ChartsProps> = ({
         times={history.t}
         color="#9aa4ff"
         tick={tick}
-        target={tractionMaxKw}
         unit="kW"
         decimals={1}
       />

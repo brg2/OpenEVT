@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { defaultConfig, defaultInputs } from "./sim/defaults";
 import type { ExportPayload, SimConfig, SimInputs, SimState } from "./sim/types";
+import { clamp, rpmShape } from "./sim/utils";
 import Controls from "./ui/Controls";
 import Diagram from "./ui/Diagram";
 import Charts from "./ui/Charts";
@@ -129,6 +130,7 @@ const App: React.FC = () => {
           if (!merged.vehicle.motorMaxRpm) merged.vehicle.motorMaxRpm = 11000;
           if (!merged.vehicle.regenForceGain) merged.vehicle.regenForceGain = 1;
           if (!merged.vehicle.regenMaxSoc) merged.vehicle.regenMaxSoc = merged.battery.socMax;
+          if (!(merged.engine as any).effRpm) merged.engine.effRpm = (merged.engine.idleRpm + merged.engine.redlineRpm) * 0.5;
           return merged;
         }
       }
@@ -307,6 +309,28 @@ const App: React.FC = () => {
     };
   }, [simState]);
 
+  const sweetSpotKw = useMemo(() => {
+    const effRpmRaw = Number.isFinite(config.engine.effRpm)
+      ? config.engine.effRpm
+      : (config.engine.idleRpm + config.engine.redlineRpm) * 0.5;
+    const effRpm = clamp(effRpmRaw, config.engine.idleRpm, config.engine.redlineRpm);
+    const g = clamp(
+      rpmShape(effRpm, config.engine.idleRpm, config.engine.redlineRpm, config.engine.effRpm),
+      0,
+      1.1,
+    );
+    const mechKw = config.engine.maxPowerKw * g;
+    const rpmNorm = clamp(effRpm / Math.max(1, config.engine.redlineRpm), 0, 1.2);
+    const parasiticKw = config.engine.maxPowerKw * (0.03 + 0.12 * rpmNorm * rpmNorm);
+    return Math.max(0, Math.max(0, mechKw - parasiticKw) * config.generator.eff);
+  }, [
+    config.engine.effRpm,
+    config.engine.idleRpm,
+    config.engine.redlineRpm,
+    config.engine.maxPowerKw,
+    config.generator.eff,
+  ]);
+
   return (
     <div className="app">
       <div className="header">
@@ -349,7 +373,7 @@ const App: React.FC = () => {
         <Charts
           history={historyRef.current}
           tick={renderTick}
-          tractionMaxKw={config.vehicle.motorPeakPowerKw * config.vehicle.drivetrainEff}
+          sweetSpotKw={sweetSpotKw}
           busMin={config.bus.vMin}
           busMax={config.bus.vMax}
         />

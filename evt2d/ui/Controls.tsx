@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { SimConfig, SimInputs } from "../sim/types";
+import { clamp, rpmShape } from "../sim/utils";
 
 const COLLAPSE_KEY = "openevt-2d-collapse";
 const PROFILE_KEY = "openevt-2d-profiles";
@@ -35,13 +36,23 @@ type EngineProfileId =
   | "custom"
   | "7.4l-carb"
   | "7.4l-efi"
+  | "lq4-6.0l"
+  | "6bt-400kw"
+  | "cummins-l9-bus"
   | "5l"
   | "3l"
   | "2.5l"
   | "2l"
   | "1.5l";
 
-type EvtProfileId = "custom" | "small" | "medium" | "large";
+type EvtProfileId =
+  | "custom"
+  | "small"
+  | "medium"
+  | "large"
+  | "heavy-duty"
+  | "500kw"
+  | "600kw";
 type BatteryProfileId = "custom" | "lto" | "lfp" | "nmc" | "nca" | "lmo" | "lco";
 
 const Controls: React.FC<ControlsProps> = ({
@@ -184,6 +195,7 @@ const Controls: React.FC<ControlsProps> = ({
         ...config.engine,
         idleRpm: 900,
         redlineRpm: 5200,
+        effRpm: 2200,
         maxPowerKw: 220,
         rpmTimeConst: 0.8,
         engineEff: 0.26,
@@ -192,14 +204,43 @@ const Controls: React.FC<ControlsProps> = ({
         ...config.engine,
         idleRpm: 900,
         redlineRpm: 5200,
+        effRpm: 2400,
         maxPowerKw: 230,
         rpmTimeConst: 0.6,
         engineEff: 0.30,
+      },
+      "lq4-6.0l": {
+        ...config.engine,
+        idleRpm: 650,
+        redlineRpm: 6000,
+        effRpm: 4000,
+        maxPowerKw: 240,
+        rpmTimeConst: 0.55,
+        engineEff: 0.30,
+      },
+      "6bt-400kw": {
+        ...config.engine,
+        idleRpm: 750,
+        redlineRpm: 3200,
+        effRpm: 1600,
+        maxPowerKw: 400,
+        rpmTimeConst: 0.9,
+        engineEff: 0.38,
+      },
+      "cummins-l9-bus": {
+        ...config.engine,
+        idleRpm: 650,
+        redlineRpm: 2300,
+        effRpm: 1400,
+        maxPowerKw: 283,
+        rpmTimeConst: 0.8,
+        engineEff: 0.36,
       },
       "5l": {
         ...config.engine,
         idleRpm: 850,
         redlineRpm: 5600,
+        effRpm: 3500,
         maxPowerKw: 180,
         rpmTimeConst: 0.6,
         engineEff: 0.30,
@@ -208,6 +249,7 @@ const Controls: React.FC<ControlsProps> = ({
         ...config.engine,
         idleRpm: 800,
         redlineRpm: 6000,
+        effRpm: 3000,
         maxPowerKw: 140,
         rpmTimeConst: 0.55,
         engineEff: 0.32,
@@ -216,6 +258,7 @@ const Controls: React.FC<ControlsProps> = ({
         ...config.engine,
         idleRpm: 800,
         redlineRpm: 6200,
+        effRpm: 3200,
         maxPowerKw: 120,
         rpmTimeConst: 0.5,
         engineEff: 0.33,
@@ -224,6 +267,7 @@ const Controls: React.FC<ControlsProps> = ({
         ...config.engine,
         idleRpm: 800,
         redlineRpm: 6500,
+        effRpm: 3500,
         maxPowerKw: 105,
         rpmTimeConst: 0.45,
         engineEff: 0.34,
@@ -232,6 +276,7 @@ const Controls: React.FC<ControlsProps> = ({
         ...config.engine,
         idleRpm: 800,
         redlineRpm: 6800,
+        effRpm: 3800,
         maxPowerKw: 85,
         rpmTimeConst: 0.4,
         engineEff: 0.35,
@@ -239,6 +284,30 @@ const Controls: React.FC<ControlsProps> = ({
     };
     onConfig({ engine: profiles[id] });
   };
+
+  const evtSweetSpotKw = useMemo(() => {
+    // Static sizing guidance: electrical kW the engine can sustain at its "Eff RPM".
+    const effRpmRaw = Number.isFinite(config.engine.effRpm)
+      ? config.engine.effRpm
+      : (config.engine.idleRpm + config.engine.redlineRpm) * 0.5;
+    const effRpm = clamp(effRpmRaw, config.engine.idleRpm, config.engine.redlineRpm);
+    const g = clamp(
+      rpmShape(effRpm, config.engine.idleRpm, config.engine.redlineRpm, config.engine.effRpm),
+      0,
+      1.1,
+    );
+    const mechKw = config.engine.maxPowerKw * g;
+    const rpmNorm = clamp(effRpm / Math.max(1, config.engine.redlineRpm), 0, 1.2);
+    const parasiticKw = config.engine.maxPowerKw * (0.03 + 0.12 * rpmNorm * rpmNorm);
+    const elecKw = Math.max(0, mechKw - parasiticKw) * config.generator.eff;
+    return Math.max(0, elecKw);
+  }, [
+    config.engine.effRpm,
+    config.engine.idleRpm,
+    config.engine.redlineRpm,
+    config.engine.maxPowerKw,
+    config.generator.eff,
+  ]);
 
   const applyEvtProfile = (id: EvtProfileId) => {
     if (id === "custom") return;
@@ -249,10 +318,11 @@ const Controls: React.FC<ControlsProps> = ({
           motorPeakPowerKw: 130,
           motorMaxRpm: 12000,
           tractionReduction: 3.2,
+          regenMaxKw: 130,
         },
         generator: {
           ...config.generator,
-          maxElecKw: 110,
+          maxElecKw: 130,
           stepUpRatio: 2.0,
         },
       },
@@ -262,10 +332,11 @@ const Controls: React.FC<ControlsProps> = ({
           motorPeakPowerKw: 220,
           motorMaxRpm: 11000,
           tractionReduction: 2.9,
+          regenMaxKw: 220,
         },
         generator: {
           ...config.generator,
-          maxElecKw: 160,
+          maxElecKw: 220,
           stepUpRatio: 2.2,
         },
       },
@@ -275,11 +346,54 @@ const Controls: React.FC<ControlsProps> = ({
           motorPeakPowerKw: 300,
           motorMaxRpm: 10000,
           tractionReduction: 2.6,
+          regenMaxKw: 300,
         },
         generator: {
           ...config.generator,
-          maxElecKw: 210,
+          maxElecKw: 300,
           stepUpRatio: 2.4,
+        },
+      },
+      "heavy-duty": {
+        vehicle: {
+          ...config.vehicle,
+          motorPeakPowerKw: 420,
+          motorMaxRpm: 9000,
+          tractionReduction: 2.3,
+          regenMaxKw: 420,
+        },
+        generator: {
+          ...config.generator,
+          maxElecKw: 420,
+          stepUpRatio: 2.6,
+        },
+      },
+      "500kw": {
+        vehicle: {
+          ...config.vehicle,
+          motorPeakPowerKw: 500,
+          motorMaxRpm: 8500,
+          tractionReduction: 2.1,
+          regenMaxKw: 500,
+        },
+        generator: {
+          ...config.generator,
+          maxElecKw: 500,
+          stepUpRatio: 2.8,
+        },
+      },
+      "600kw": {
+        vehicle: {
+          ...config.vehicle,
+          motorPeakPowerKw: 600,
+          motorMaxRpm: 8000,
+          tractionReduction: 2.0,
+          regenMaxKw: 600,
+        },
+        generator: {
+          ...config.generator,
+          maxElecKw: 600,
+          stepUpRatio: 3.0,
         },
       },
     };
@@ -527,13 +641,16 @@ const Controls: React.FC<ControlsProps> = ({
             }}
           >
               <option value="custom">Custom</option>
-              <option value="7.4l-carb">7.4L Carb</option>
-              <option value="7.4l-efi">7.4L EFI</option>
-              <option value="5l">5.0L</option>
-              <option value="3l">3.0L</option>
-              <option value="2.5l">2.5L</option>
-              <option value="2l">2.0L</option>
-              <option value="1.5l">1.5L</option>
+              <option value="7.4l-carb">220 kW — 7.4L Carb</option>
+              <option value="7.4l-efi">230 kW — 7.4L EFI</option>
+              <option value="lq4-6.0l">240 kW — GM LQ4 6.0L Vortec</option>
+              <option value="6bt-400kw">400 kW — Cummins 6BT Diesel</option>
+              <option value="cummins-l9-bus">283 kW — Cummins L9 (Transit)</option>
+              <option value="5l">180 kW — 5.0L</option>
+              <option value="3l">140 kW — 3.0L</option>
+              <option value="2.5l">120 kW — 2.5L</option>
+              <option value="2l">105 kW — 2.0L</option>
+              <option value="1.5l">85 kW — 1.5L</option>
             </select>
           </div>
           <div className="control-row">
@@ -565,19 +682,50 @@ const Controls: React.FC<ControlsProps> = ({
             />
           </div>
           <div className="control-row">
-            <label>Peak Power (kW)</label>
+            <label>Eff RPM</label>
             <input
               type="number"
-              value={config.engine.maxPowerKw}
-              step={5}
+              value={config.engine.effRpm}
+              step={50}
               disabled={engineProfile !== "custom"}
               onChange={(e) =>
                 onConfig({
-                  engine: { ...config.engine, maxPowerKw: Number(e.target.value) },
+                  engine: { ...config.engine, effRpm: Number(e.target.value) },
                 })
               }
             />
           </div>
+          <div className="control-row">
+            <label>Peak Power (kW)</label>
+            <input
+              type="number"
+            value={config.engine.maxPowerKw}
+            step={5}
+            disabled={engineProfile !== "custom"}
+            onChange={(e) =>
+              onConfig({
+                engine: { ...config.engine, maxPowerKw: Number(e.target.value) },
+              })
+            }
+          />
+        </div>
+        <div className="control-row">
+          <label>Engine Peak (kW)</label>
+          <span>{config.engine.maxPowerKw.toFixed(0)}</span>
+        </div>
+        <input
+          type="range"
+          min={50}
+          max={1000}
+          step={5}
+          value={config.engine.maxPowerKw}
+          disabled={engineProfile !== "custom"}
+          onChange={(e) =>
+            onConfig({
+              engine: { ...config.engine, maxPowerKw: Number(e.target.value) },
+            })
+          }
+        />
           <div className="control-row">
             <label>Engine Eff</label>
             <input
@@ -598,7 +746,10 @@ const Controls: React.FC<ControlsProps> = ({
       </details>
 
       <details open={collapse.evt} onToggle={(e) => setOpen("evt", e.currentTarget.open)}>
-        <summary>EVT</summary>
+        <summary>
+          EVT — Sweet Spot&nbsp;
+          {Math.round(evtSweetSpotKw)} kW
+        </summary>
         <div className="control-group">
           <div className="control-row" style={{ justifyContent: "space-between" }}>
             <label>EVT Profile</label>
@@ -611,25 +762,54 @@ const Controls: React.FC<ControlsProps> = ({
             }}
           >
               <option value="custom">Custom</option>
-              <option value="small">Small</option>
-              <option value="medium">Medium</option>
-              <option value="large">Large</option>
+              <option value="small">130 kW — Small</option>
+              <option value="medium">220 kW — Medium</option>
+              <option value="large">300 kW — Large</option>
+              <option value="heavy-duty">420 kW — Heavy Duty</option>
+              <option value="500kw">500 kW — 500 kW</option>
+              <option value="600kw">600 kW — 600 kW</option>
             </select>
           </div>
-          <div className="control-row">
-            <label>Traction Motor Peak (kW)</label>
-            <input
-              type="number"
-              value={config.vehicle.motorPeakPowerKw}
-              step={10}
-              disabled={evtProfile !== "custom"}
-              onChange={(e) =>
-                onConfig({
-                  vehicle: { ...config.vehicle, motorPeakPowerKw: Number(e.target.value) },
-                })
-              }
-            />
-          </div>
+        <div className="control-row">
+          <label>Traction Motor Peak (kW)</label>
+          <input
+            type="number"
+            value={config.vehicle.motorPeakPowerKw}
+            step={10}
+            disabled={evtProfile !== "custom"}
+            onChange={(e) =>
+              onConfig({
+                vehicle: { ...config.vehicle, motorPeakPowerKw: Number(e.target.value) },
+              })
+            }
+          />
+        </div>
+        <div className="control-row">
+          <label>EVT Peak (kW)</label>
+          <span>{config.vehicle.motorPeakPowerKw.toFixed(0)}</span>
+        </div>
+        <input
+          type="range"
+          min={100}
+          max={1000}
+          step={10}
+          value={config.vehicle.motorPeakPowerKw}
+          disabled={evtProfile !== "custom"}
+          onChange={(e) => {
+            const peak = Number(e.target.value);
+            onConfig({
+              vehicle: {
+                ...config.vehicle,
+                motorPeakPowerKw: peak,
+                regenMaxKw: peak,
+              },
+              generator: {
+                ...config.generator,
+                maxElecKw: peak,
+              },
+            });
+          }}
+        />
           <div className="control-row">
             <label>Traction Motor RPM Limit</label>
             <input
@@ -730,13 +910,13 @@ const Controls: React.FC<ControlsProps> = ({
               }
             />
           </div>
-          <div className="control-row">
-            <label>Regen Max (kW)</label>
-            <input
-              type="number"
-              value={config.vehicle.regenMaxKw}
-              step={5}
-              disabled={evtProfile !== "custom"}
+        <div className="control-row">
+          <label>Regen Peak (kW)</label>
+          <input
+            type="number"
+            value={config.vehicle.regenMaxKw}
+            step={5}
+            disabled={evtProfile !== "custom"}
               onChange={(e) =>
                 onConfig({
                   vehicle: { ...config.vehicle, regenMaxKw: Number(e.target.value) },
@@ -744,11 +924,11 @@ const Controls: React.FC<ControlsProps> = ({
               }
             />
           </div>
-          <div className="control-row">
-            <label>Regen Max SOC</label>
-            <input
-              type="number"
-              value={config.vehicle.regenMaxSoc}
+        <div className="control-row">
+          <label>Regen Peak SOC</label>
+          <input
+            type="number"
+            value={config.vehicle.regenMaxSoc}
               step={0.01}
               min={0}
               max={1}

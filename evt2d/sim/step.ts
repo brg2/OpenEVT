@@ -25,6 +25,7 @@ export const createInitialState = (config: SimConfig): SimState => {
     pTracElecKw: 0,
     pGenElecKw: 0,
     pBattKw: 0,
+    pEngAvailKw: 0,
     pEngMechKw: 0,
     fuelRateGph: 0,
     genDelayBuffer: new Array(delaySteps).fill(0),
@@ -84,14 +85,20 @@ export const step = (
   const fRoll = vehicle.cr * vehicle.massKg * 9.81;
   const fGrade = vehicle.massKg * 9.81 * Math.sin(gradeRad);
 
-  const pWheelsMaxKw = vehicle.motorPeakPowerKw * vehicle.drivetrainEff;
-  let pWheelsReqKw = clamp(inputs.aps, 0, 1) * pWheelsMaxKw;
+  // In this Basic simulator, Accelerator (TPS) is also the traction request "pedal" (APS).
+  // IMPORTANT: Pedal request should not scale when you change EVT peak ratings; those should
+  // behave like capability limits. So we map APS against engine peak (electrical) potential,
+  // then clamp by EVT (motor) capability.
+  const aps = clamp(inputs.tps, 0, 1);
+  const pWheelsCapKw = vehicle.motorPeakPowerKw * vehicle.drivetrainEff;
+  const pWheelsPedalMaxKw = engine.maxPowerKw * generator.eff * vehicle.drivetrainEff;
+  let pWheelsReqKw = clamp(aps * pWheelsPedalMaxKw, 0, pWheelsCapKw);
 
   // One-pedal regen: as TPS lifts, regen increases proportional to (1 - TPS) and speed,
   // and is disabled above regenMaxSoc to avoid overcharge.
   next.regenActive = false;
   const tpsEff0 = clamp(inputs.tps, 0, 1);
-  if (v > 0.5) {
+  {
     const regenSocMax = Math.min(
       battery.socMax,
       Number.isFinite(vehicle.regenMaxSoc) ? vehicle.regenMaxSoc : battery.socMax,
@@ -101,11 +108,12 @@ export const step = (
       0,
       1,
     );
+    // No hard threshold: regen scales smoothly with speed (0 at standstill).
     const speedFactor = clamp(v / 15, 0, 1);
     const tpsFactor = clamp(1 - tpsEff0, 0, 1);
     const regenKw = vehicle.regenMaxKw * tpsFactor * speedFactor * socHeadroom;
     if (regenKw > 0) {
-      pWheelsReqKw = clamp(pWheelsReqKw - regenKw, -vehicle.regenMaxKw, pWheelsMaxKw);
+      pWheelsReqKw = clamp(pWheelsReqKw - regenKw, -vehicle.regenMaxKw, pWheelsCapKw);
       next.regenActive = true;
     }
   }
@@ -117,13 +125,44 @@ export const step = (
   next.pWheelsCmdKw = pWheelsCmdKw;
 
   const tpsEff = tpsEff0;
-  let rpmTarget = engine.idleRpm + tpsEff * (engine.redlineRpm - engine.idleRpm);
 
-  const rpm = state.rpm + ((rpmTarget - state.rpm) * dt) / Math.max(0.1, engine.rpmTimeConst);
-  next.rpm = rpm;
+  // Engine RPM: simple governor toward "Eff RPM" with load-induced droop.
+  // We base droop on the previous-step load to keep the step solver consistent (no mid-step
+  // rewrites of RPM after power calculations).
+  const rpmTargetBase = clamp(
+    engine.idleRpm + tpsEff * (engine.effRpm - engine.idleRpm),
+    engine.idleRpm,
+    engine.redlineRpm,
+  );
+  const loadFracPrev = clamp(
+    state.pEngMechKw / Math.max(1, engine.maxPowerKw),
+    0,
+    1.5,
+  );
+  const droopGain = 0.35;
+  const rpmTarget = clamp(
+    rpmTargetBase - (rpmTargetBase - engine.idleRpm) * loadFracPrev * droopGain,
+    engine.idleRpm,
+    engine.redlineRpm,
+  );
+  const rpmNow = clamp(
+    state.rpm + ((rpmTarget - state.rpm) * dt) / Math.max(0.05, engine.rpmTimeConst),
+    engine.idleRpm,
+    engine.redlineRpm,
+  );
+  next.rpm = rpmNow;
 
-  const g = clamp(rpmShape(rpm, engine.idleRpm, engine.redlineRpm), 0, 1.1);
+  const g = clamp(
+    rpmShape(rpmNow, engine.idleRpm, engine.redlineRpm, engine.effRpm),
+    0,
+    1.1,
+  );
   const pEngAvailKw = tpsEff * engine.maxPowerKw * g;
+  next.pEngAvailKw = pEngAvailKw;
+
+  const rpmNorm = clamp(rpmNow / Math.max(1, engine.redlineRpm), 0, 1.2);
+  const parasiticKw = engine.maxPowerKw * (0.03 + 0.12 * rpmNorm * rpmNorm);
+  const pEngNetAvailKw = Math.max(0, pEngAvailKw - parasiticKw);
 
   let pTracElecReqKw = pWheelsCmdKw / Math.max(0.01, vehicle.drivetrainEff);
 
@@ -142,13 +181,18 @@ export const step = (
     }
   }
 
-  const pGenMaxKw = Math.min(generator.maxElecKw, pEngAvailKw * generator.eff);
+  const pGenMaxKw = Math.min(generator.maxElecKw, pEngNetAvailKw * generator.eff);
   let pGenElecKw = 0;
   let pGenElecRawKw = 0;
 
   // In Basic mode, traction is capped so generator retains a proportional SOC reserve.
   // Example: SOC 0.2, target 0.5 => scale 0.4 => traction <= 40% of gen potential.
   let socErrorFrac = 0;
+  const socSpan = Math.max(0.02, battery.socMax - battery.socMin);
+  const socDischargeFrac = clamp((state.soc - battery.socMin) / socSpan, 0, 1);
+  const socChargeFrac = clamp((battery.socMax - state.soc) / socSpan, 0, 1);
+  const maxDischargeKw = battery.maxDischargeKw * socDischargeFrac;
+  const maxChargeKw = battery.maxChargeKw * socChargeFrac;
   if (config.mode === "basic") {
     const target = Math.max(0.01, battery.socTarget);
     const scale = clamp(state.soc / target, 0, 1.5);
@@ -163,44 +207,42 @@ export const step = (
     }
   }
 
-  const chargeHeadroom = clamp(pGenMaxKw * socErrorFrac, -pGenMaxKw, pGenMaxKw);
-  const demand = pTracElecReqKw + chargeHeadroom;
+  // Charge request is limited by battery acceptance; if SOC is above target, we don't
+  // request "negative charge" here (battery discharge is handled by allowing traction
+  // to exceed generator when SOC > target).
+  const chargeRequestKw =
+    socErrorFrac > 0 ? clamp(pGenMaxKw * socErrorFrac, 0, maxChargeKw) : 0;
+  const demand = pTracElecReqKw + chargeRequestKw;
   pGenElecRawKw = clamp(Math.min(pGenMaxKw, demand), 0, pGenMaxKw);
 
-  const delaySteps = Math.max(
-    1,
-    Math.round(
-      clamp(
-        Number.isFinite(generator.responseTimeSec) ? generator.responseTimeSec : 2.5,
-        0,
-        10,
-      ) / dt,
-    ),
+  // Generator response: first-order lag + ramp rate (traction is instant; battery buffers).
+  const genTau = clamp(
+    Number.isFinite(generator.responseTimeSec) ? generator.responseTimeSec : 2.5,
+    0,
+    10,
   );
-  let delayBuffer = state.genDelayBuffer.slice();
-  if (state.genDelaySteps !== delaySteps || delayBuffer.length !== delaySteps) {
-    delayBuffer = new Array(delaySteps).fill(state.pGenElecKw);
+  if (genTau > 1e-3) {
+    const alpha = clamp(dt / genTau, 0, 1);
+    pGenElecKw = state.pGenElecKw + (pGenElecRawKw - state.pGenElecKw) * alpha;
+  } else {
+    pGenElecKw = pGenElecRawKw;
   }
-  delayBuffer.push(pGenElecRawKw);
-  pGenElecKw = delayBuffer.shift() ?? pGenElecRawKw;
-  next.genDelayBuffer = delayBuffer;
-  next.genDelaySteps = delaySteps;
+  const rampKwPerS = Math.max(0, generator.proRampKwPerS);
+  if (rampKwPerS > 0) {
+    const maxDelta = rampKwPerS * dt;
+    pGenElecKw = clamp(
+      pGenElecKw,
+      state.pGenElecKw - maxDelta,
+      state.pGenElecKw + maxDelta,
+    );
+  }
+  pGenElecKw = clamp(pGenElecKw, 0, pGenMaxKw);
+
+  // Keep legacy delay buffer fields for export/compat (no longer used for dynamics).
+  next.genDelayBuffer = state.genDelayBuffer;
+  next.genDelaySteps = state.genDelaySteps;
 
   let pBattKw = pTracElecReqKw - pGenElecKw;
-
-  const socSpan = Math.max(0.02, battery.socMax - battery.socMin);
-  const socDischargeFrac = clamp(
-    (state.soc - battery.socMin) / socSpan,
-    0,
-    1,
-  );
-  const socChargeFrac = clamp(
-    (battery.socMax - state.soc) / socSpan,
-    0,
-    1,
-  );
-  const maxDischargeKw = battery.maxDischargeKw * socDischargeFrac;
-  const maxChargeKw = battery.maxChargeKw * socChargeFrac;
 
   if (pBattKw > maxDischargeKw) {
     pBattKw = maxDischargeKw;
@@ -232,6 +274,12 @@ export const step = (
   next.vBus = clamp(vBus, bus.vMin, bus.vMax);
 
   let pTracElecKw = pGenElecKw + pBattKw;
+  // Rectifier behavior: if the bus/battery can't accept generator output, it must taper.
+  // Never "dump" excess into traction beyond the requested electrical power.
+  if (pTracElecKw > pTracElecReqKw + 1e-6) {
+    pGenElecKw = Math.max(0, pTracElecReqKw - pBattKw);
+    pTracElecKw = pGenElecKw + pBattKw;
+  }
   if (pTracElecKw > pTracElecReqKw + 0.01 && vBus > bus.vMax + 2) {
     pGenElecKw = Math.max(0, pTracElecReqKw - pBattKw);
     pTracElecKw = pGenElecKw + pBattKw;
@@ -263,7 +311,7 @@ export const step = (
   const wheelRpm = (vNext / wheelCirc) * 60;
   next.wheelRpm = wheelRpm;
   next.motorRpm = wheelRpm * vehicle.tractionReduction * vehicle.diffRatio;
-  next.genRpm = rpm * generator.stepUpRatio;
+  next.genRpm = next.rpm * generator.stepUpRatio;
   next.aMps2 = a;
   next.distanceM = state.distanceM + vNext * dt;
 

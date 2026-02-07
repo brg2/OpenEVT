@@ -31,6 +31,7 @@ export const defaultConfig: SimConfig = {
   engine: {
     idleRpm: 900,
     redlineRpm: 5200,
+    effRpm: 2400,
     maxPowerKw: 190,
     rpmTimeConst: 0.6,
     engineEff: 0.32,

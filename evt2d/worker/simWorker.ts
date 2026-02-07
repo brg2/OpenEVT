@@ -81,7 +81,7 @@ const tick = () => {
         const sample = sampleSeries(recordedInputs, t);
         effectiveInputs = {
           ...inputs,
-          aps: sample.aps,
+          aps: sample.tps,
           tps: sample.tps,
           gradePct: sample.gradePct ?? inputs.gradePct,
         };
@@ -93,7 +93,7 @@ const tick = () => {
     if (recording) {
       recordedInputs.push({
         t: state.timeSec,
-        aps: effectiveInputs.aps,
+        aps: effectiveInputs.tps,
         tps: effectiveInputs.tps,
         gradePct: effectiveInputs.gradePct,
       });

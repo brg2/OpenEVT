@@ -37,6 +37,7 @@ export interface SimConfig {
   engine: {
     idleRpm: number;
     redlineRpm: number;
+    effRpm: number;
     maxPowerKw: number;
     rpmTimeConst: number;
     engineEff: number;
@@ -97,6 +98,7 @@ export interface SimState {
   pTracElecKw: number;
   pGenElecKw: number;
   pBattKw: number;
+  pEngAvailKw: number;
   pEngMechKw: number;
   fuelRateGph: number;
   genDelayBuffer: number[];
