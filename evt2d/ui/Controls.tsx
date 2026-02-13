@@ -12,6 +12,8 @@ interface ControlsProps {
   speed: number;
   recording: boolean;
   replaying: boolean;
+  audioEnabled: boolean;
+  audioVolume: number;
   onInputs: (patch: Partial<SimInputs>) => void;
   onConfig: (patch: Partial<SimConfig>) => void;
   onToggleRun: () => void;
@@ -22,6 +24,8 @@ interface ControlsProps {
   onReplay: () => void;
   onStopReplay: () => void;
   onExport: () => void;
+  onAudioEnabled: (enabled: boolean) => void;
+  onAudioVolume: (volume: number) => void;
 }
 
 type VehicleProfileId =
@@ -62,6 +66,8 @@ const Controls: React.FC<ControlsProps> = ({
   speed,
   recording,
   replaying,
+  audioEnabled,
+  audioVolume,
   onInputs,
   onConfig,
   onToggleRun,
@@ -72,6 +78,8 @@ const Controls: React.FC<ControlsProps> = ({
   onReplay,
   onStopReplay,
   onExport,
+  onAudioEnabled,
+  onAudioVolume,
 }) => {
   const [collapse, setCollapse] = useState(() => {
     try {
@@ -193,6 +201,8 @@ const Controls: React.FC<ControlsProps> = ({
     const profiles: Record<Exclude<EngineProfileId, "custom">, SimConfig["engine"]> = {
       "7.4l-carb": {
         ...config.engine,
+        bsfcProfileId: "7.4l-carb",
+        cylinders: 8,
         idleRpm: 900,
         redlineRpm: 5200,
         effRpm: 2200,
@@ -202,6 +212,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "7.4l-efi": {
         ...config.engine,
+        bsfcProfileId: "7.4l-efi",
+        cylinders: 8,
         idleRpm: 900,
         redlineRpm: 5200,
         effRpm: 2400,
@@ -211,6 +223,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "lq4-6.0l": {
         ...config.engine,
+        bsfcProfileId: "lq4-6.0l",
+        cylinders: 8,
         idleRpm: 650,
         redlineRpm: 6000,
         effRpm: 4000,
@@ -220,6 +234,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "6bt-400kw": {
         ...config.engine,
+        bsfcProfileId: "6bt-400kw",
+        cylinders: 6,
         idleRpm: 750,
         redlineRpm: 3200,
         effRpm: 1600,
@@ -229,6 +245,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "cummins-l9-bus": {
         ...config.engine,
+        bsfcProfileId: "cummins-l9-bus",
+        cylinders: 6,
         idleRpm: 650,
         redlineRpm: 2300,
         effRpm: 1400,
@@ -238,6 +256,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "5l": {
         ...config.engine,
+        bsfcProfileId: "5l",
+        cylinders: 8,
         idleRpm: 850,
         redlineRpm: 5600,
         effRpm: 3500,
@@ -247,6 +267,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "3l": {
         ...config.engine,
+        bsfcProfileId: "3l",
+        cylinders: 6,
         idleRpm: 800,
         redlineRpm: 6000,
         effRpm: 3000,
@@ -256,6 +278,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "2.5l": {
         ...config.engine,
+        bsfcProfileId: "2.5l",
+        cylinders: 4,
         idleRpm: 800,
         redlineRpm: 6200,
         effRpm: 3200,
@@ -265,6 +289,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "2l": {
         ...config.engine,
+        bsfcProfileId: "2l",
+        cylinders: 4,
         idleRpm: 800,
         redlineRpm: 6500,
         effRpm: 3500,
@@ -274,6 +300,8 @@ const Controls: React.FC<ControlsProps> = ({
       },
       "1.5l": {
         ...config.engine,
+        bsfcProfileId: "1.5l",
+        cylinders: 4,
         idleRpm: 800,
         redlineRpm: 6800,
         effRpm: 3800,
@@ -298,7 +326,7 @@ const Controls: React.FC<ControlsProps> = ({
     );
     const mechKw = config.engine.maxPowerKw * g;
     const rpmNorm = clamp(effRpm / Math.max(1, config.engine.redlineRpm), 0, 1.2);
-    const parasiticKw = config.engine.maxPowerKw * (0.03 + 0.12 * rpmNorm * rpmNorm);
+    const parasiticKw = config.engine.maxPowerKw * (0.01 + 0.08 * rpmNorm * rpmNorm);
     const elecKw = Math.max(0, mechKw - parasiticKw) * config.generator.eff;
     return Math.max(0, elecKw);
   }, [
@@ -486,6 +514,29 @@ const Controls: React.FC<ControlsProps> = ({
               </button>
             </div>
           </div>
+          <div className="control-row">
+            <label>Audio</label>
+            <div className="footer-controls">
+              <button
+                className={audioEnabled ? "primary" : "ghost"}
+                onClick={() => onAudioEnabled(!audioEnabled)}
+              >
+                {audioEnabled ? "On" : "Off"}
+              </button>
+            </div>
+          </div>
+          <div className="control-row">
+            <label>Volume</label>
+            <span>{Math.round(audioVolume * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={audioVolume}
+            onChange={(e) => onAudioVolume(Number(e.target.value))}
+          />
         </div>
       </details>
 
@@ -494,25 +545,28 @@ const Controls: React.FC<ControlsProps> = ({
         <div className="control-group">
           <div className="control-row">
             <label>Accelerator</label>
-            <span>{inputs.tps.toFixed(3)}</span>
+            <span>{inputs.aps.toFixed(3)}</span>
           </div>
           <input
             type="range"
             min={0}
             max={1}
             step={0.001}
-            value={inputs.tps}
-            onChange={(e) => onInputs({ tps: Number(e.target.value) })}
+            value={inputs.aps}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              onInputs({ aps: v, tps: v });
+            }}
           />
         <div className="control-row">
           <label>Grade (%)</label>
-          <span>{inputs.gradePct.toFixed(1)}</span>
+          <span>{Math.round(inputs.gradePct)}</span>
         </div>
         <input
           type="range"
-          min={-6}
-          max={6}
-          step={0.1}
+          min={-12}
+          max={12}
+          step={1}
           value={inputs.gradePct}
           onChange={(e) => onInputs({ gradePct: Number(e.target.value) })}
         />
@@ -751,6 +805,50 @@ const Controls: React.FC<ControlsProps> = ({
           {Math.round(evtSweetSpotKw)} kW
         </summary>
         <div className="control-group">
+          <div className="control-row">
+            <label>Control Mode</label>
+            <select
+              value={config.generator.controlMode}
+              onChange={(e) =>
+                onConfig({
+                  generator: {
+                    ...config.generator,
+                    controlMode: e.target.value as
+                      | "bsfc_island"
+                      | "bsfc_island_direct"
+                      | "direct",
+                  },
+                })
+              }
+            >
+              <option value="bsfc_island">BSFC Island</option>
+              <option value="bsfc_island_direct">BSFC Island - Direct TPS</option>
+              <option value="direct">Direct TPS (Pedal, Coast-to-Idle)</option>
+            </select>
+          </div>
+          {config.generator.controlMode === "bsfc_island_direct" ? (
+            <>
+              <div className="control-row">
+                <label>EV Assist (SOC&gt;target)</label>
+                <span>{Math.round(clamp(config.vehicle.evAssistStrength, 0, 1) * 1000)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={clamp(config.vehicle.evAssistStrength, 0, 1)}
+                onChange={(e) =>
+                  onConfig({
+                    vehicle: {
+                      ...config.vehicle,
+                      evAssistStrength: Number(e.target.value),
+                    },
+                  })
+                }
+              />
+            </>
+          ) : null}
           <div className="control-row" style={{ justifyContent: "space-between" }}>
             <label>EVT Profile</label>
             <select
@@ -881,6 +979,23 @@ const Controls: React.FC<ControlsProps> = ({
             />
           </div>
           <div className="control-row">
+            <label>Gen Demand Ramp (kW/s)</label>
+            <span>{Math.round(config.generator.demandRampKwPerS)}</span>
+          </div>
+          <input
+            type="range"
+            min={20}
+            max={220}
+            step={5}
+            value={config.generator.demandRampKwPerS}
+            disabled={evtProfile !== "custom"}
+            onChange={(e) =>
+              onConfig({
+                generator: { ...config.generator, demandRampKwPerS: Number(e.target.value) },
+              })
+            }
+          />
+          <div className="control-row">
             <label>Gen Response (s)</label>
             <input
               type="number"
@@ -924,6 +1039,23 @@ const Controls: React.FC<ControlsProps> = ({
               }
             />
           </div>
+        <div className="control-row">
+          <label>Traction Ramp (kW/s)</label>
+          <span>{Math.round(config.vehicle.tracRampKwPerS)}</span>
+        </div>
+        <input
+          type="range"
+          min={50}
+          max={550}
+          step={10}
+          value={config.vehicle.tracRampKwPerS}
+          disabled={evtProfile !== "custom"}
+          onChange={(e) =>
+            onConfig({
+              vehicle: { ...config.vehicle, tracRampKwPerS: Number(e.target.value) },
+            })
+          }
+        />
         <div className="control-row">
           <label>Regen Peak SOC</label>
           <input
@@ -1069,20 +1201,26 @@ const Controls: React.FC<ControlsProps> = ({
           </div>
           <div className="control-row">
             <label>SOC Target</label>
-            <input
-              type="number"
-              value={config.battery.socTarget}
-              step={0.01}
-              min={0}
-              max={1}
-              disabled={batteryProfile !== "custom"}
-              onChange={(e) =>
-                onConfig({
-                  battery: { ...config.battery, socTarget: Number(e.target.value) },
-                })
-              }
-            />
+            <span>{clamp(config.battery.socTarget, 0.1, 0.9).toFixed(2)}</span>
           </div>
+          <input
+            type="range"
+            min={0.1}
+            max={0.9}
+            step={0.01}
+            value={clamp(config.battery.socTarget, 0.1, 0.9)}
+            disabled={batteryProfile !== "custom"}
+            onChange={(e) => {
+              const v = clamp(
+                Number(e.target.value),
+                Math.max(0.1, config.battery.socMin),
+                Math.min(0.9, config.battery.socMax),
+              );
+              onConfig({
+                battery: { ...config.battery, socTarget: v },
+              });
+            }}
+          />
           <div className="control-row">
             <label>SOC Target Band</label>
             <input

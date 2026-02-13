@@ -1,0 +1,19 @@
+services:
+  omedit:
+    build: .
+    container_name: openevt-omedit
+    environment:
+      DISPLAY: ":0"
+      VNC_PORT: "5900"
+      VNC_GEOMETRY: "1920x1080"
+      VNC_DEPTH: "24"
+      # Set this in your shell or in a .env file to require a password:
+      # VNC_PASSWORD: "change-me"
+    ports:
+      - "5901:5900"   # VNC client connects to localhost:5901
+    volumes:
+      - ..:/work:rw
+      - om_openmodelica:/home/omuser/.openmodelica
+
+volumes:
+  om_openmodelica:

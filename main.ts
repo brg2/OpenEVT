@@ -569,7 +569,7 @@ class EvtOverlay {
 
 const appEl = document.querySelector<HTMLElement>("#app");
 if (!appEl) throw new Error("Missing #app element");
-const evtOverlay = new EvtOverlay(appEl);
+new EvtOverlay(appEl);
 
 // Sky + Sun
 const sky = new Sky();

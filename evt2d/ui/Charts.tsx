@@ -5,6 +5,7 @@ interface HistoryBuffer {
   soc: number[];
   vBus: number[];
   rpm: number[];
+  motorRpm: number[];
   speedMph: number[];
   fuelGph: number[];
   mpg: number[];
@@ -16,9 +17,13 @@ interface HistoryBuffer {
 interface ChartsProps {
   history: HistoryBuffer;
   tick: number;
-  sweetSpotKw: number;
   busMin: number;
   busMax: number;
+  socMin: number;
+  socMax: number;
+  socTarget: number;
+  battMaxDischargeKw: number;
+  battMaxChargeKw: number;
 }
 
 const drawLine = (
@@ -27,7 +32,6 @@ const drawLine = (
   min: number,
   max: number,
   color: string,
-  target?: number,
   hoverIndex?: number,
   band?: { min: number; max: number; color: string },
 ) => {
@@ -66,19 +70,6 @@ const drawLine = (
   });
   ctx.stroke();
 
-  if (typeof target === "number") {
-    const t = (target - min) / Math.max(1e-6, max - min);
-    const y = h - t * h;
-    ctx.strokeStyle = "rgba(255,255,255,0.4)";
-    ctx.lineWidth = 1;
-    ctx.setLineDash([6, 6]);
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
   if (typeof hoverIndex === "number" && hoverIndex >= 0 && values.length > 0) {
     const idx = Math.min(values.length - 1, Math.max(0, hoverIndex));
     const v = values[idx];
@@ -106,10 +97,11 @@ const ChartCard: React.FC<{
   max?: number;
   color: string;
   tick: number;
-  target?: number;
   unit?: string;
   decimals?: number;
   band?: { min: number; max: number; color: string };
+  secondaryValue?: string;
+  secondaryAtIndex?: (index: number, value: number) => string | null;
 }> = ({
   title,
   values,
@@ -118,10 +110,11 @@ const ChartCard: React.FC<{
   max,
   color,
   tick,
-  target,
   unit,
   decimals = 1,
   band,
+  secondaryValue,
+  secondaryAtIndex,
 }) => {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -138,6 +131,13 @@ const ChartCard: React.FC<{
     hoverIndex !== null && safeTimes.length
       ? safeTimes[Math.min(safeTimes.length - 1, Math.max(0, hoverIndex))]
       : null;
+  const hoverSecondary =
+    hoverIndex !== null && hoverValue !== null && secondaryAtIndex
+      ? secondaryAtIndex(
+          Math.min(safeValues.length - 1, Math.max(0, hoverIndex)),
+          hoverValue,
+        )
+      : null;
 
   useEffect(() => {
     const canvas = ref.current;
@@ -148,7 +148,6 @@ const ChartCard: React.FC<{
     const dataMin = safeValues.length ? Math.min(...safeValues) : 0;
     const dataMax = safeValues.length ? Math.max(...safeValues) : 1;
     const extra: number[] = [];
-    if (typeof target === "number") extra.push(target);
     if (band) extra.push(band.min, band.max);
     const extraMin = extra.length ? Math.min(...extra) : dataMin;
     const extraMax = extra.length ? Math.max(...extra) : dataMax;
@@ -163,22 +162,23 @@ const ChartCard: React.FC<{
       resolvedMin,
       resolvedMax,
       color,
-      target,
       hoverIndex ?? undefined,
       band,
     );
-  }, [safeValues, min, max, color, tick, target, hoverIndex, band]);
+  }, [safeValues, min, max, color, tick, hoverIndex, band]);
 
   return (
     <div>
       <div className="control-row" style={{ marginBottom: 4 }}>
         <label>
           {title} — {displayValue}
+          {secondaryValue ? ` · ${secondaryValue}` : ""}
         </label>
         {hoverValue !== null && (
           <span className="badge">
             t={hoverTime?.toFixed(1) ?? "--"}s · {hoverValue.toFixed(decimals)}
             {unit ? ` ${unit}` : ""}
+            {hoverSecondary ? ` · ${hoverSecondary}` : ""}
           </span>
         )}
       </div>
@@ -203,14 +203,26 @@ const ChartCard: React.FC<{
 const Charts: React.FC<ChartsProps> = ({
   history,
   tick,
-  sweetSpotKw,
   busMin,
   busMax,
+  socMin,
+  socMax,
+  socTarget,
+  battMaxDischargeKw,
+  battMaxChargeKw,
 }) => {
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+  const socSpan = Math.max(0.02, socMax - socMin);
+  const maxOutKwForSoc = (soc: number) =>
+    battMaxDischargeKw * clamp01((soc - socMin) / socSpan);
+  const maxInKwForSoc = (soc: number) =>
+    battMaxChargeKw * clamp01((socMax - soc) / socSpan);
+  const lastSoc = history.soc.length ? history.soc[history.soc.length - 1] : 0;
+
   return (
     <>
       <ChartCard
-        title="SOC"
+        title={`SOC (target ${socTarget.toFixed(2)})`}
         values={history.soc}
         times={history.t}
         min={0}
@@ -219,6 +231,10 @@ const Charts: React.FC<ChartsProps> = ({
         tick={tick}
         unit=""
         decimals={2}
+        secondaryValue={`Max out ${maxOutKwForSoc(lastSoc).toFixed(0)} kW · Max in ${maxInKwForSoc(lastSoc).toFixed(0)} kW`}
+        secondaryAtIndex={(_, soc) =>
+          `Max out ${maxOutKwForSoc(soc).toFixed(0)} kW · Max in ${maxInKwForSoc(soc).toFixed(0)} kW`
+        }
       />
       <ChartCard
         title="Bus Voltage"
@@ -233,12 +249,11 @@ const Charts: React.FC<ChartsProps> = ({
         band={{ min: busMin, max: busMax, color: "rgba(71,179,255,0.12)" }}
       />
       <ChartCard
-        title="Engine RPM"
-        values={history.rpm}
+        title="Traction Motor RPM"
+        values={history.motorRpm}
         times={history.t}
-        min={600}
-        max={6000}
-        color="#ffb020"
+        min={0}
+        color="#b5b9ff"
         tick={tick}
         unit="rpm"
         decimals={0}
@@ -278,6 +293,17 @@ const Charts: React.FC<ChartsProps> = ({
         tick={tick}
         unit="kW"
         decimals={1}
+      />
+      <ChartCard
+        title="Engine RPM"
+        values={history.rpm}
+        times={history.t}
+        min={600}
+        max={6000}
+        color="#ffb020"
+        tick={tick}
+        unit="rpm"
+        decimals={0}
       />
       <ChartCard
         title="Traction Power (kW)"

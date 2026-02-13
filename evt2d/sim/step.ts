@@ -1,8 +1,14 @@
 import type { SimConfig, SimInputs, SimState } from "./types";
+import { CONTROL_PROFILES, resolveControlMode } from "./controlProfiles";
 import { clamp, rpmShape } from "./utils";
 
 const V_EPS = 1.0;
 const RHO = 1.225;
+
+const smoothstep = (edge0: number, edge1: number, x: number) => {
+  const t = clamp((x - edge0) / Math.max(1e-6, edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+};
 
 export const createInitialState = (config: SimConfig): SimState => {
   const rpm = config.engine.idleRpm;
@@ -16,6 +22,11 @@ export const createInitialState = (config: SimConfig): SimState => {
     aMps2: 0,
     distanceM: 0,
     rpm,
+    engineMode: "idle",
+    rpmTarget: rpm,
+    tqTargetNm: 0,
+    tpsCmd: 0,
+    modeTimerSec: 0,
     regenActive: false,
     soc: config.battery.initialSoc,
     vBus: config.battery.vNom,
@@ -23,6 +34,8 @@ export const createInitialState = (config: SimConfig): SimState => {
     pWheelsCmdKw: 0,
     pWheelsKw: 0,
     pTracElecKw: 0,
+    pTracCapKw: 0,
+    pGenElecCmdKw: 0,
     pGenElecKw: 0,
     pBattKw: 0,
     pEngAvailKw: 0,
@@ -85,19 +98,175 @@ export const step = (
   const fRoll = vehicle.cr * vehicle.massKg * 9.81;
   const fGrade = vehicle.massKg * 9.81 * Math.sin(gradeRad);
 
-  // In this Basic simulator, Accelerator (TPS) is also the traction request "pedal" (APS).
-  // IMPORTANT: Pedal request should not scale when you change EVT peak ratings; those should
-  // behave like capability limits. So we map APS against engine peak (electrical) potential,
-  // then clamp by EVT (motor) capability.
-  const aps = clamp(inputs.tps, 0, 1);
-  const pWheelsCapKw = vehicle.motorPeakPowerKw * vehicle.drivetrainEff;
-  const pWheelsPedalMaxKw = engine.maxPowerKw * generator.eff * vehicle.drivetrainEff;
-  let pWheelsReqKw = clamp(aps * pWheelsPedalMaxKw, 0, pWheelsCapKw);
+  // Pedal intent.
+  const aps = clamp(inputs.aps, 0, 1);
+  next.prevTps = aps;
+
+  let pTracElecReqKw = 0;
+  let pWheelsReqKw = 0;
+  next.regenActive = false;
+
+  const controlMode = resolveControlMode(config);
+
+  // Traction request from the driver (positive accel). This gets capped later by available power.
+  // In BSFC Island - Direct TPS, add SOC-above-target "EV assist" so the driver can get useful
+  // acceleration without needing a large pedal (and thus a large TPS command).
+  //
+  // Also in this mode, apply a speed-aware "coast shaping" at very low pedal so feathering does
+  // not cause large torque changes while the vehicle is moving (smooth gradient, no binary gap).
+  const socTarget = clamp(battery.socTarget, battery.socMin, battery.socMax);
+  const socBand = Math.max(0.01, battery.socTargetBand);
+  const socAboveFrac = clamp((state.soc - socTarget) / socBand, 0, 1);
+  const evAssistStrength = clamp(
+    Number.isFinite(vehicle.evAssistStrength) ? vehicle.evAssistStrength : 0.5,
+    0,
+    1,
+  );
+  // 0..1 slider maps to 0..1000% additional traction-per-pedal (when SOC is above target).
+  const evAssistMaxBoost = 10.0;
+  const evAssistMul =
+    controlMode === "bsfc_island_direct"
+      ? 1 + evAssistStrength * evAssistMaxBoost * socAboveFrac
+      : 1;
+  const apsForTrac = (() => {
+    if (controlMode !== "bsfc_island_direct") return aps;
+    const coastAps = 0.08;
+    const apsShaped = aps * smoothstep(0, coastAps, aps);
+    // Blend shaping in only when moving (keep standstill launch linear).
+    const speedBlend = smoothstep(0.5, 5.0, v); // ~1 mph -> ~11 mph
+    return aps + (apsShaped - aps) * speedBlend;
+  })();
+  const pTracUserReqKw = apsForTrac * vehicle.motorPeakPowerKw * evAssistMul;
+
+  // Motor RPM based on current speed (used for sink gating and overspeed taper).
+  const wheelRpmNow = (v / wheelCirc) * 60;
+  const motorRpmNow = wheelRpmNow * vehicle.tractionReduction * vehicle.diffRatio;
+
+  // SOC band for engine mode hysteresis around the target.
+  const socHyst = Math.max(0.01, battery.socTargetBand) * 0.5;
+  const socHigh = clamp(socTarget + socHyst, battery.socMin, battery.socMax);
+
+  // Apply overspeed taper to the *requested* positive traction; if we're oversped and can't
+  // accept power, we should not keep the engine on the island (no sink).
+  const rpmLimit = Math.max(1, vehicle.motorMaxRpm);
+  const rpmSoftStart = rpmLimit * 0.95;
+  let pTracUserReqTaperedKw = pTracUserReqKw;
+  if (motorRpmNow > rpmSoftStart && pTracUserReqTaperedKw > 0) {
+    const scale = clamp(
+      (rpmLimit - motorRpmNow) / Math.max(1, rpmLimit - rpmSoftStart),
+      0,
+      1,
+    );
+    pTracUserReqTaperedKw *= scale;
+  }
+
+  // In Basic/rectifier mode, the engine+generator are only used when the battery SOC is
+  // at/below the target band (charging need). Using the upper hysteresis bound avoids
+  // float-equality edge cases at exactly the target.
+  const sink = state.soc <= socHigh;
+
+  // In direct mode, allow the engine/generator to follow the pedal only when there is a
+  // meaningful electrical sink (traction demand) or we still need to charge up to target.
+  // Otherwise, we "coast" the engine at idle (TPS=0, gen=0) even if the pedal is barely open.
+  const genAllowedDirect =
+    sink || pTracUserReqTaperedKw > Math.max(0, engine.pEpsilonKw);
+
+  // Resolve control behavior via swappable profiles (instead of interwoven conditionals).
+  const profile = CONTROL_PROFILES[controlMode] ?? CONTROL_PROFILES.bsfc_island;
+  const ctx = {
+    state,
+    inputs,
+    config,
+    dt,
+    aps,
+    pTracUserReqTaperedKw,
+    sink,
+    socTarget,
+    socHigh,
+    genAllowedDirect,
+  };
+  const modeUpdate = profile.updateMode(ctx, {
+    engineMode: state.engineMode,
+    modeTimerSec: state.modeTimerSec,
+  });
+  const engineMode = modeUpdate.engineMode;
+  next.engineMode = engineMode;
+  next.modeTimerSec = modeUpdate.modeTimerSec;
+
+  const cmd = profile.command(ctx, modeUpdate);
+  next.rpmTarget = cmd.rpmTarget;
+  next.tqTargetNm = cmd.tqTargetNm;
+  next.tpsCmd = cmd.tpsCmd;
+
+  // RPM follows target (no free-rev outside island).
+  const rpmNow = clamp(
+    state.rpm +
+      ((cmd.rpmTarget - state.rpm) * dt) / Math.max(0.05, engine.rpmTimeConst),
+    engine.idleRpm,
+    engine.redlineRpm,
+  );
+  next.rpm = rpmNow;
+
+  // Available mechanical power at current RPM given throttle command.
+  const gNow = clamp(
+    rpmShape(rpmNow, engine.idleRpm, engine.redlineRpm, engine.effRpm),
+    0,
+    1.1,
+  );
+  const pEngAvailKw = cmd.tpsCmd * engine.maxPowerKw * gNow;
+  next.pEngAvailKw = pEngAvailKw;
+
+  const rpmNorm = clamp(rpmNow / Math.max(1, engine.redlineRpm), 0, 1.2);
+  const parasiticKw = engine.maxPowerKw * (0.01 + 0.08 * rpmNorm * rpmNorm);
+  const pEngNetAvailKw = Math.max(0, pEngAvailKw - parasiticKw);
+
+  const pGenMaxKw = Math.min(generator.maxElecKw, pEngNetAvailKw * generator.eff);
+  let pGenElecKw = 0;
+  let pGenElecTargetKw = 0;
+  let pGenElecCmdKw = Math.max(0, state.pGenElecCmdKw || 0);
+
+  const socSpan = Math.max(0.02, battery.socMax - battery.socMin);
+  const socDischargeFrac = clamp((state.soc - battery.socMin) / socSpan, 0, 1);
+  const socChargeFrac = clamp((battery.socMax - state.soc) / socSpan, 0, 1);
+  const maxDischargeKw = battery.maxDischargeKw * socDischargeFrac;
+  const maxChargeKw = battery.maxChargeKw * socChargeFrac;
+
+  // Generator command (electrical): bounded by what the engine can supply at the commanded
+  // island point (or zero when idling).
+  const pGenCmdRawKw = pGenMaxKw;
+
+  // SOC Target Band controls how strongly we bias generator-vs-traction so SOC moves toward target.
+  const targetSoc = clamp(battery.socTarget, battery.socMin, battery.socMax);
+  const band = Math.max(0.01, battery.socTargetBand);
+  const socErr = state.soc - targetSoc; // + => above target, - => below
+  const socFrac = clamp(socErr / band, -1, 1);
+
+  // Available traction shaping (symmetric and enforceable):
+  // - SOC above target => discharge bias => traction > gen (battery discharges)
+  // - SOC below target => charge bias => traction < gen (battery charges)
+  // Reserve is bounded so low pedal never fully zeros traction.
+  const reserveFracMax = 0.8;
+  const desiredDischargeKw = socFrac > 0 ? socFrac * maxDischargeKw : 0;
+  const desiredChargeKw =
+    socFrac < 0 ? (-socFrac) * reserveFracMax * Math.min(maxChargeKw, pGenCmdRawKw) : 0;
+  // Traction power limits:
+  // - Hard cap: what we can supply electrically right now (engine + allowable battery discharge).
+  // - SOC cap (BSFC Island - Direct TPS only): when SOC is below target, cap traction so the
+  //   generator can exceed traction (net charging) without violating TPS=APS.
+  const pTracCapHardKw = clamp(pGenCmdRawKw + maxDischargeKw, 0, vehicle.motorPeakPowerKw);
+  let pTracCapSocKw = pTracCapHardKw;
+  if (controlMode === "bsfc_island_direct" && socFrac < 0) {
+    // Ensure: pGenElecTarget = pTrac + desiredCharge <= pGenCmdRaw.
+    // ReserveFracMax prevents this from collapsing traction to zero at low power.
+    pTracCapSocKw = clamp(pGenCmdRawKw - desiredChargeKw, 0, pTracCapHardKw);
+  }
+  next.pTracCapKw = pTracCapSocKw;
+
+  pTracElecReqKw = clamp(pTracUserReqTaperedKw, 0, pTracCapSocKw);
+  if (pTracElecReqKw < pTracUserReqTaperedKw - 1e-6) next.limiter.tracPower = true;
 
   // One-pedal regen: as TPS lifts, regen increases proportional to (1 - TPS) and speed,
   // and is disabled above regenMaxSoc to avoid overcharge.
-  next.regenActive = false;
-  const tpsEff0 = clamp(inputs.tps, 0, 1);
   {
     const regenSocMax = Math.min(
       battery.socMax,
@@ -110,110 +279,103 @@ export const step = (
     );
     // No hard threshold: regen scales smoothly with speed (0 at standstill).
     const speedFactor = clamp(v / 15, 0, 1);
-    const tpsFactor = clamp(1 - tpsEff0, 0, 1);
-    const regenKw = vehicle.regenMaxKw * tpsFactor * speedFactor * socHeadroom;
-    if (regenKw > 0) {
-      pWheelsReqKw = clamp(pWheelsReqKw - regenKw, -vehicle.regenMaxKw, pWheelsCapKw);
+    // One-pedal regen shouldn't fight commanded forward torque at partial pedal.
+    // Treat very small pedal as the "coast" region where regen ramps in.
+    const regenNeutralAps = 0.05;
+    const apsFactor = aps < regenNeutralAps ? (regenNeutralAps - aps) / regenNeutralAps : 0;
+    const regenElecKw = vehicle.regenMaxKw * apsFactor * speedFactor * socHeadroom;
+    if (regenElecKw > 0) {
+      pTracElecReqKw = clamp(
+        pTracElecReqKw - regenElecKw,
+        -vehicle.regenMaxKw,
+        vehicle.motorPeakPowerKw,
+      );
       next.regenActive = true;
     }
   }
 
-  next.pWheelsReqKw = pWheelsReqKw;
-  next.prevTps = tpsEff0;
-
-  const pWheelsCmdKw = pWheelsReqKw;
-  next.pWheelsCmdKw = pWheelsCmdKw;
-
-  const tpsEff = tpsEff0;
-
-  // Engine RPM: simple governor toward "Eff RPM" with load-induced droop.
-  // We base droop on the previous-step load to keep the step solver consistent (no mid-step
-  // rewrites of RPM after power calculations).
-  const rpmTargetBase = clamp(
-    engine.idleRpm + tpsEff * (engine.effRpm - engine.idleRpm),
-    engine.idleRpm,
-    engine.redlineRpm,
-  );
-  const loadFracPrev = clamp(
-    state.pEngMechKw / Math.max(1, engine.maxPowerKw),
-    0,
-    1.5,
-  );
-  const droopGain = 0.35;
-  const rpmTarget = clamp(
-    rpmTargetBase - (rpmTargetBase - engine.idleRpm) * loadFracPrev * droopGain,
-    engine.idleRpm,
-    engine.redlineRpm,
-  );
-  const rpmNow = clamp(
-    state.rpm + ((rpmTarget - state.rpm) * dt) / Math.max(0.05, engine.rpmTimeConst),
-    engine.idleRpm,
-    engine.redlineRpm,
-  );
-  next.rpm = rpmNow;
-
-  const g = clamp(
-    rpmShape(rpmNow, engine.idleRpm, engine.redlineRpm, engine.effRpm),
-    0,
-    1.1,
-  );
-  const pEngAvailKw = tpsEff * engine.maxPowerKw * g;
-  next.pEngAvailKw = pEngAvailKw;
-
-  const rpmNorm = clamp(rpmNow / Math.max(1, engine.redlineRpm), 0, 1.2);
-  const parasiticKw = engine.maxPowerKw * (0.03 + 0.12 * rpmNorm * rpmNorm);
-  const pEngNetAvailKw = Math.max(0, pEngAvailKw - parasiticKw);
-
-  let pTracElecReqKw = pWheelsCmdKw / Math.max(0.01, vehicle.drivetrainEff);
-
-  // Soft taper near motor max RPM (ratios + tire determine max wheel speed).
-  const wheelRpmNow = (v / wheelCirc) * 60;
-  const motorRpmNow = wheelRpmNow * vehicle.tractionReduction * vehicle.diffRatio;
-  const rpmLimit = Math.max(1, vehicle.motorMaxRpm);
-  const rpmSoftStart = rpmLimit * 0.95;
   if (motorRpmNow > rpmSoftStart) {
-    const scale = clamp((rpmLimit - motorRpmNow) / Math.max(1, rpmLimit - rpmSoftStart), 0, 1);
-    if (scale < 1) {
-      pTracElecReqKw *= scale;
-      pWheelsReqKw = pTracElecReqKw * vehicle.drivetrainEff;
-      next.pWheelsReqKw = pWheelsReqKw;
-      next.limiter.tracPower = true;
+    // Positive traction must taper to protect overspeed.
+    // For regen, allow braking torque even slightly above the limit so we can pull the motor
+    // back under the safe RPM band (one-pedal downhill control).
+    if (pTracElecReqKw >= 0) {
+      const scale = clamp(
+        (rpmLimit - motorRpmNow) / Math.max(1, rpmLimit - rpmSoftStart),
+        0,
+        1,
+      );
+      if (scale < 1) {
+        pTracElecReqKw *= scale;
+        next.limiter.tracPower = true;
+      }
+    } else {
+      const regenHardCut = rpmLimit * 1.1;
+      const scale = motorRpmNow >= regenHardCut ? 0 : 1;
+      if (scale < 1) {
+        pTracElecReqKw *= scale;
+        next.limiter.tracPower = true;
+      }
     }
   }
 
-  const pGenMaxKw = Math.min(generator.maxElecKw, pEngNetAvailKw * generator.eff);
-  let pGenElecKw = 0;
-  let pGenElecRawKw = 0;
-
-  // In Basic mode, traction is capped so generator retains a proportional SOC reserve.
-  // Example: SOC 0.2, target 0.5 => scale 0.4 => traction <= 40% of gen potential.
-  let socErrorFrac = 0;
-  const socSpan = Math.max(0.02, battery.socMax - battery.socMin);
-  const socDischargeFrac = clamp((state.soc - battery.socMin) / socSpan, 0, 1);
-  const socChargeFrac = clamp((battery.socMax - state.soc) / socSpan, 0, 1);
-  const maxDischargeKw = battery.maxDischargeKw * socDischargeFrac;
-  const maxChargeKw = battery.maxChargeKw * socChargeFrac;
-  if (config.mode === "basic") {
-    const target = Math.max(0.01, battery.socTarget);
-    const scale = clamp(state.soc / target, 0, 1.5);
-    socErrorFrac = 1 - scale;
-    if (Math.abs(scale - 1) > 0.01) next.limiter.tracPower = true;
-    // Cap traction against generator capability so SOC can charge or discharge toward target.
-    const maxTracBySoc = pGenMaxKw * scale;
-    if (pTracElecReqKw > maxTracBySoc) {
-      pTracElecReqKw = maxTracBySoc;
-      pWheelsReqKw = pTracElecReqKw * vehicle.drivetrainEff;
-      next.pWheelsReqKw = pWheelsReqKw;
+  // Traction ramp limiter: bound how quickly commanded traction power can change.
+  // This protects mechanical components from step torque and sudden reversals.
+  {
+    const rampKwPerS = Math.max(0, Number.isFinite(vehicle.tracRampKwPerS) ? vehicle.tracRampKwPerS : 0);
+    if (rampKwPerS > 0) {
+      const prev = Number.isFinite(state.pTracElecKw) ? state.pTracElecKw : 0;
+      const maxDelta = rampKwPerS * dt;
+      const lo = -Math.max(0, vehicle.regenMaxKw);
+      const hi = Math.max(0, pTracCapHardKw);
+      pTracElecReqKw = clamp(
+        clamp(pTracElecReqKw, prev - maxDelta, prev + maxDelta),
+        lo,
+        hi,
+      );
     }
   }
 
-  // Charge request is limited by battery acceptance; if SOC is above target, we don't
-  // request "negative charge" here (battery discharge is handled by allowing traction
-  // to exceed generator when SOC > target).
-  const chargeRequestKw =
-    socErrorFrac > 0 ? clamp(pGenMaxKw * socErrorFrac, 0, maxChargeKw) : 0;
-  const demand = pTracElecReqKw + chargeRequestKw;
-  pGenElecRawKw = clamp(Math.min(pGenMaxKw, demand), 0, pGenMaxKw);
+  pWheelsReqKw = pTracElecReqKw * vehicle.drivetrainEff;
+  next.pWheelsReqKw = pWheelsReqKw;
+  next.pWheelsCmdKw = pWheelsReqKw;
+
+  // In Basic/rectifier mode, generator kW is biased relative to the (SOC-shaped) traction
+  // request so SOC moves toward target:
+  // - SOC above target => gen < traction (discharge battery)
+  // - SOC below target => gen > traction (charge battery)
+  // If traction is capped to 0 by the SOC reserve while charging is needed, allow the
+  // generator to still produce charge power (no need for positive traction as a prerequisite).
+  if (pTracElecReqKw < 0) {
+    // When regenning, generator should not produce power.
+    pGenElecTargetKw = 0;
+  } else {
+    // Target generator power based on traction + SOC bias (controller target, not engine-limited).
+    pGenElecTargetKw = clamp(
+      pTracElecReqKw + desiredChargeKw - desiredDischargeKw,
+      0,
+      generator.maxElecKw,
+    );
+  }
+
+  // Controller-side demand ramp: limit how quickly the generator request changes.
+  // This prevents abrupt engine/generator load steps (RPM spikes) even if the plant is fast.
+  {
+    const demandRampKwPerS = Math.max(
+      0,
+      Number.isFinite(generator.demandRampKwPerS) ? generator.demandRampKwPerS : 0,
+    );
+    if (demandRampKwPerS > 0) {
+      const maxDelta = demandRampKwPerS * dt;
+      pGenElecCmdKw = clamp(
+        pGenElecTargetKw,
+        pGenElecCmdKw - maxDelta,
+        pGenElecCmdKw + maxDelta,
+      );
+    } else {
+      pGenElecCmdKw = pGenElecTargetKw;
+    }
+    pGenElecCmdKw = clamp(pGenElecCmdKw, 0, generator.maxElecKw);
+  }
 
   // Generator response: first-order lag + ramp rate (traction is instant; battery buffers).
   const genTau = clamp(
@@ -223,9 +385,9 @@ export const step = (
   );
   if (genTau > 1e-3) {
     const alpha = clamp(dt / genTau, 0, 1);
-    pGenElecKw = state.pGenElecKw + (pGenElecRawKw - state.pGenElecKw) * alpha;
+    pGenElecKw = state.pGenElecKw + (pGenElecCmdKw - state.pGenElecKw) * alpha;
   } else {
-    pGenElecKw = pGenElecRawKw;
+    pGenElecKw = pGenElecCmdKw;
   }
   const rampKwPerS = Math.max(0, generator.proRampKwPerS);
   if (rampKwPerS > 0) {
@@ -237,6 +399,12 @@ export const step = (
     );
   }
   pGenElecKw = clamp(pGenElecKw, 0, pGenMaxKw);
+  // Rectifier reality: above SOC target we must not keep pushing extra generator power into
+  // the battery (charging). If SOC is above target, generator output cannot exceed traction
+  // demand; otherwise SOC will creep upward.
+  if (socFrac > 0 && pTracElecReqKw > 0) {
+    pGenElecKw = Math.min(pGenElecKw, pTracElecReqKw);
+  }
 
   // Keep legacy delay buffer fields for export/compat (no longer used for dynamics).
   next.genDelayBuffer = state.genDelayBuffer;
@@ -289,11 +457,14 @@ export const step = (
   const pWheelsKw = pTracElecKw * vehicle.drivetrainEff;
   next.pWheelsKw = pWheelsKw;
   next.pTracElecKw = pTracElecKw;
+  next.pGenElecCmdKw = Math.max(0, pGenElecCmdKw);
   next.pGenElecKw = Math.max(0, pGenElecKw);
   next.pBattKw = pBattKw;
   next.pEngMechKw = pGenElecKw / Math.max(0.01, generator.eff);
+  // Fuel burn includes generator shaft power plus parasitic pumping/friction to hold RPM.
+  const pFuelMechKw = Math.max(0, parasiticKw + next.pEngMechKw);
   next.fuelRateGph =
-    (next.pEngMechKw / Math.max(0.05, engine.engineEff)) /
+    (pFuelMechKw / Math.max(0.05, engine.engineEff)) /
     Math.max(1e-6, engine.fuelKwhPerGallon);
 
   if (next.pWheelsKw < pWheelsReqKw - 0.5) next.limiter.tracPower = true;

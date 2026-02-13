@@ -1,1 +1,1 @@
-{"root":["./main.ts","./vite-env.d.ts","./vite.config.ts"],"version":"5.9.3"}
+{"root":["./main.ts","./vite-env.d.ts","./vite.config.ts","./evt2d/audio/enginesound.ts","./evt2d/sim/bsfc.ts","./evt2d/sim/controlprofiles.ts","./evt2d/sim/defaults.ts","./evt2d/sim/step.ts","./evt2d/sim/types.ts","./evt2d/sim/utils.ts","./evt2d/worker/simworker.ts","./evt2d/app.tsx","./evt2d/main.tsx","./evt2d/ui/charts.tsx","./evt2d/ui/controls.tsx","./evt2d/ui/diagram.tsx","./evt2d/ui/stats.tsx"],"version":"5.9.3"}

@@ -1,0 +1,22 @@
+// OpenEVT: OpenModelica batch run
+// Run via: omc scripts/run.mos
+
+cd(".");
+system("mkdir -p out");
+
+loadFile("OpenEVT.mo");
+getErrorString();
+
+// Simulate and export CSV
+simulate(
+  OpenEVT.EVT2D_BasicTest,
+  stopTime=120,
+  numberOfIntervals=2400,
+  tolerance=1e-6,
+  outputFormat="csv",
+  fileNamePrefix="out/evt2d"
+);
+getErrorString();
+
+system("ls -la out/evt2d_res.csv");
+system("tail -n 1 out/evt2d_res.csv | head -c 240; echo");

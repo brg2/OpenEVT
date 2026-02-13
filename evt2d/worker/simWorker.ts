@@ -1,3 +1,5 @@
+/// <reference lib="webworker" />
+
 import { defaultConfig, defaultInputs } from "../sim/defaults";
 import { createInitialState, step } from "../sim/step";
 import type { ExportPayload, ScriptedPoint, SimConfig, SimInputs, SimState } from "../sim/types";

@@ -1,0 +1,5 @@
+// Install Modelica Standard Library (MSL) if missing.
+// Safe to run repeatedly; OpenModelica will no-op if already installed.
+setCommandLineOptions("--showErrorMessages");
+installPackage("Modelica");
+getErrorString();
