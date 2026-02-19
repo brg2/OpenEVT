@@ -6,8 +6,13 @@ const V_EPS = 1.0;
 const RHO = 1.225;
 
 const smoothstep = (edge0: number, edge1: number, x: number) => {
-  const t = clamp((x - edge0) / Math.max(1e-6, edge1 - edge0), 0, 1);
-  return t * t * (3 - 2 * t);
+  if (edge0 === edge1) return x < edge0 ? 0 : 1;
+  const flip = edge1 < edge0;
+  const a = flip ? edge1 : edge0;
+  const b = flip ? edge0 : edge1;
+  const t = clamp((x - a) / Math.max(1e-6, b - a), 0, 1);
+  const y = t * t * (3 - 2 * t);
+  return flip ? 1 - y : y;
 };
 
 export const createInitialState = (config: SimConfig): SimState => {
@@ -131,7 +136,8 @@ export const step = (
   const apsForTrac = (() => {
     if (controlMode !== "bsfc_island_direct") return aps;
     const coastAps = 0.08;
-    const apsShaped = aps * smoothstep(0, coastAps, aps);
+    const s = smoothstep(0, coastAps, aps);
+    const apsShaped = aps * s * s;
     // Blend shaping in only when moving (keep standstill launch linear).
     const speedBlend = smoothstep(0.5, 5.0, v); // ~1 mph -> ~11 mph
     return aps + (apsShaped - aps) * speedBlend;
@@ -246,7 +252,7 @@ export const step = (
   // - SOC below target => charge bias => traction < gen (battery charges)
   // Reserve is bounded so low pedal never fully zeros traction.
   const reserveFracMax = 0.8;
-  const desiredDischargeKw = socFrac > 0 ? socFrac * maxDischargeKw : 0;
+  let desiredDischargeKw = socFrac > 0 ? socFrac * maxDischargeKw : 0;
   const desiredChargeKw =
     socFrac < 0 ? (-socFrac) * reserveFracMax * Math.min(maxChargeKw, pGenCmdRawKw) : 0;
   // Traction power limits:
@@ -279,10 +285,16 @@ export const step = (
     );
     // No hard threshold: regen scales smoothly with speed (0 at standstill).
     const speedFactor = clamp(v / 15, 0, 1);
-    // One-pedal regen shouldn't fight commanded forward torque at partial pedal.
-    // Treat very small pedal as the "coast" region where regen ramps in.
-    const regenNeutralAps = 0.05;
-    const apsFactor = aps < regenNeutralAps ? (regenNeutralAps - aps) / regenNeutralAps : 0;
+    // In BSFC Island - Direct TPS, avoid any on/off "bubble" where small pedal changes flip
+    // between traction and regen. Regen should mostly be a true pedal-lift behavior.
+    const apsFactor =
+      controlMode === "bsfc_island_direct"
+        ? smoothstep(0.015, 0.0, aps) // ~0 above ~1.5% pedal, smoothly -> 1 at pedal=0
+        : (() => {
+            // Legacy behavior: small coast region where regen ramps in.
+            const regenNeutralAps = 0.05;
+            return aps < regenNeutralAps ? (regenNeutralAps - aps) / regenNeutralAps : 0;
+          })();
     const regenElecKw = vehicle.regenMaxKw * apsFactor * speedFactor * socHeadroom;
     if (regenElecKw > 0) {
       pTracElecReqKw = clamp(
@@ -339,6 +351,14 @@ export const step = (
   next.pWheelsReqKw = pWheelsReqKw;
   next.pWheelsCmdKw = pWheelsReqKw;
 
+  // In BSFC Island - Direct TPS, avoid collapsing generator power to ~0 above SOC target.
+  // We still enforce traction > generator (battery discharges), but keep some proportional
+  // generator load so mid pedal doesn't turn into "battery-only" propulsion.
+  if (controlMode === "bsfc_island_direct" && socFrac > 0 && pTracElecReqKw > 0) {
+    const maxDischargeShare = 0.6; // => gen >= 40% of traction when above target
+    desiredDischargeKw = Math.min(desiredDischargeKw, pTracElecReqKw * maxDischargeShare);
+  }
+
   // In Basic/rectifier mode, generator kW is biased relative to the (SOC-shaped) traction
   // request so SOC moves toward target:
   // - SOC above target => gen < traction (discharge battery)
@@ -349,12 +369,24 @@ export const step = (
     // When regenning, generator should not produce power.
     pGenElecTargetKw = 0;
   } else {
-    // Target generator power based on traction + SOC bias (controller target, not engine-limited).
-    pGenElecTargetKw = clamp(
-      pTracElecReqKw + desiredChargeKw - desiredDischargeKw,
-      0,
-      generator.maxElecKw,
-    );
+    if (controlMode === "bsfc_island_direct") {
+      // In Direct TPS mode, throttle is driver-controlled (TPS=APS). Generator power should
+      // follow traction demand (and SOC bias) while being limited by what that TPS/RPM can
+      // actually supply. This keeps generator behavior aligned with pedal intent and the
+      // BSFC island RPM blending (which is based on electrical demand).
+      pGenElecTargetKw = clamp(
+        pTracElecReqKw + desiredChargeKw - desiredDischargeKw,
+        0,
+        pGenCmdRawKw,
+      );
+    } else {
+      // Target generator power based on traction + SOC bias (controller target, not engine-limited).
+      pGenElecTargetKw = clamp(
+        pTracElecReqKw + desiredChargeKw - desiredDischargeKw,
+        0,
+        generator.maxElecKw,
+      );
+    }
   }
 
   // Controller-side demand ramp: limit how quickly the generator request changes.

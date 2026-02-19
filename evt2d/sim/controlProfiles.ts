@@ -1,10 +1,15 @@
 import type { EngineControlMode, SimConfig, SimInputs, SimState } from "./types";
-import { buildBsfcSpec, findBestPointForPower, findBestRpmForTorque } from "./bsfc";
+import { bsfcValue, buildBsfcSpec, findBestPointForPower, findBestRpmForTorque } from "./bsfc";
 import { clamp, rpmShape } from "./utils";
 
 const smoothstep = (edge0: number, edge1: number, x: number) => {
-  const t = clamp((x - edge0) / Math.max(1e-6, edge1 - edge0), 0, 1);
-  return t * t * (3 - 2 * t);
+  if (edge0 === edge1) return x < edge0 ? 0 : 1;
+  const flip = edge1 < edge0;
+  const a = flip ? edge1 : edge0;
+  const b = flip ? edge0 : edge1;
+  const t = clamp((x - a) / Math.max(1e-6, b - a), 0, 1);
+  const y = t * t * (3 - 2 * t);
+  return flip ? 1 - y : y;
 };
 
 export type ControlProfileContext = {
@@ -114,6 +119,16 @@ const directLikeModeUpdate = (
     }
   }
   return { engineMode, modeTimerSec };
+};
+
+const alwaysIslandModeUpdate = (
+  ctx: ControlProfileContext,
+  prev: ControlModeUpdate,
+): ControlModeUpdate => {
+  return {
+    engineMode: "island",
+    modeTimerSec: prev.modeTimerSec + ctx.dt,
+  };
 };
 
 const bsfcIslandModeUpdate = (
@@ -248,15 +263,22 @@ const bsfcIslandCommand: ControlProfile["command"] = (ctx, mode) => {
   };
 };
 
-const bsfcIslandDirectCommand: ControlProfile["command"] = (ctx, mode) => {
+const bsfcIslandDirectCommand: ControlProfile["command"] = (ctx, _mode) => {
   const { engine, battery, generator } = ctx.config;
-  if (mode.engineMode !== "island") return commandIdleDefaults(ctx);
-
   const spec = buildBsfcSpec(engine);
 
   // Direct TPS (driver intent), but hold RPM near the BSFC island and optionally bias upward
   // at low RPM when SOC is below target (more available power at low speed).
   const tpsCmd = clamp(ctx.aps, 0, 1);
+  // In this mode we should not rev the engine unless the driver is actually on the pedal.
+  // SOC/target changes at zero pedal must not cause a free-rev.
+  if (tpsCmd <= 1e-4) {
+    return {
+      rpmTarget: engine.idleRpm,
+      tqTargetNm: 0,
+      tpsCmd: 0,
+    };
+  }
 
   const rpmIslandCenter = clamp(
     spec.islandRpm,
@@ -269,19 +291,86 @@ const bsfcIslandDirectCommand: ControlProfile["command"] = (ctx, mode) => {
     engine.redlineRpm,
   );
   // Under near-zero electrical load, behave like a "free rev" (no immediate jump to island RPM).
-  // As generator demand ramps up, gently pull RPM toward the island center for efficiency.
-  const prevGenCmdKw = clamp(
-    Number.isFinite(ctx.state.pGenElecCmdKw) ? ctx.state.pGenElecCmdKw : 0,
-    0,
-    generator.maxElecKw,
-  );
-  const loadFrac = clamp(prevGenCmdKw / Math.max(1, generator.maxElecKw), 0, 1);
-  const loadBlend = smoothstep(0.05, 0.35, loadFrac);
+  // When electrical demand rises (traction need and/or SOC charging need), gently pull RPM toward
+  // the island center so the same TPS produces more usable generator power.
+  const band = Math.max(0.01, battery.socTargetBand);
+  const socErr = ctx.state.soc - ctx.socTarget; // + => above target, - => below
+  const socFrac = clamp(socErr / band, -1, 1);
+
+  const socSpan = Math.max(0.02, battery.socMax - battery.socMin);
+  const socChargeFrac = clamp((battery.socMax - ctx.state.soc) / socSpan, 0, 1);
+  const maxChargeKw = battery.maxChargeKw * socChargeFrac;
+
+  const reserveFracMax = 0.8;
+  const desiredChargeKw =
+    socFrac < 0 ? (-socFrac) * reserveFracMax * Math.min(maxChargeKw, generator.maxElecKw) : 0;
+
+  const tracNeedKw = Math.max(0, ctx.pTracUserReqTaperedKw);
+  // For RPM selection, treat "need" as positive electrical throughput we want the engine to
+  // support (traction + any charging request). Discharge bias is handled elsewhere; for RPM,
+  // we still want to sit at an efficient point whenever we're producing meaningful power.
+  const pNeedForRpmKw = clamp(tracNeedKw + desiredChargeKw, 0, generator.maxElecKw);
+  const loadFrac = clamp(pNeedForRpmKw / Math.max(1, generator.maxElecKw), 0, 1);
+  const loadBlend = smoothstep(0.02, 0.25, loadFrac);
   const effPull = 1 - smoothstep(0.75, 0.95, ctx.aps);
 
-  let rpmTarget = rpmPedal + (rpmIslandCenter - rpmPedal) * loadBlend * effPull;
+  const rpmSearchMin = Math.max(
+    engine.idleRpm,
+    Math.min(engine.islandRpmMin, engine.islandRpmMax),
+  );
+  const rpmSearchMax = Math.max(
+    rpmSearchMin + 200,
+    Math.min(engine.redlineRpm, Math.max(engine.islandRpmMin, engine.islandRpmMax)),
+  );
 
-  const band = Math.max(0.01, battery.socTargetBand);
+  // Pick the RPM that yields the lowest BSFC for the *power we can actually pull* at this TPS,
+  // while also preferring to satisfy the requested electrical throughput when possible.
+  const best = (() => {
+    if (pNeedForRpmKw <= 1e-3) return null;
+    const samples = 70;
+    let bestRpm = rpmIslandCenter;
+    let bestTqNm = 0;
+    let bestScore = Number.POSITIVE_INFINITY;
+    const eff = Math.max(0.05, generator.eff);
+    const tqMax = Math.max(0, engine.islandTqMaxNm);
+    for (let i = 0; i < samples; i += 1) {
+      const u = samples <= 1 ? 0.5 : i / (samples - 1);
+      const rpm = rpmSearchMin + (rpmSearchMax - rpmSearchMin) * u;
+      const g = clamp(
+        rpmShape(rpm, engine.idleRpm, engine.redlineRpm, engine.effRpm),
+        0,
+        1.1,
+      );
+      const pAvailKw = tpsCmd * engine.maxPowerKw * g;
+      const rpmNorm = clamp(rpm / Math.max(1, engine.redlineRpm), 0, 1.2);
+      const parasiticKw = engine.maxPowerKw * (0.01 + 0.08 * rpmNorm * rpmNorm);
+      const pNetAvailKw = Math.max(0, pAvailKw - parasiticKw);
+      const pElecAvailKw = Math.min(generator.maxElecKw, pNetAvailKw * eff);
+      const pElecProdKw = Math.min(pNeedForRpmKw, pElecAvailKw);
+      const pMechProdKw = pElecProdKw / eff;
+      const tqNm = rpm > 10 ? (pMechProdKw * 9549) / rpm : 0;
+      if (!(tqNm >= 0 && tqNm <= tqMax)) continue;
+
+      const bsfc = bsfcValue(spec, rpm, tqNm);
+      const shortFrac = clamp(
+        (pNeedForRpmKw - pElecProdKw) / Math.max(1, generator.maxElecKw),
+        0,
+        1,
+      );
+      // Power shortfall penalty: prefer meeting demand, but remain BSFC-guided.
+      const score = bsfc + shortFrac * 140;
+      if (score < bestScore) {
+        bestScore = score;
+        bestRpm = rpm;
+        bestTqNm = tqNm;
+      }
+    }
+    return { rpm: bestRpm, tqNm: bestTqNm };
+  })();
+
+  const rpmEff = best?.rpm ?? rpmIslandCenter;
+  let rpmTarget = rpmPedal + (rpmEff - rpmPedal) * loadBlend * effPull;
+
   const socDef = clamp((ctx.socTarget - ctx.state.soc) / band, 0, 1);
   // When SOC is below target and generator demand is present, bias RPM upward (gently) toward
   // the island so the same TPS can produce more electrical power without a step change.
@@ -290,7 +379,7 @@ const bsfcIslandDirectCommand: ControlProfile["command"] = (ctx, mode) => {
 
   return {
     rpmTarget,
-    tqTargetNm: 0,
+    tqTargetNm: (best?.tqNm ?? 0) * loadBlend,
     tpsCmd,
   };
 };
@@ -303,7 +392,10 @@ export const CONTROL_PROFILES: Record<EngineControlMode, ControlProfile> = {
   },
   bsfc_island_direct: {
     id: "bsfc_island_direct",
-    updateMode: (ctx, prev) => directLikeModeUpdate(ctx, prev),
+    // In this mode, TPS is purely driver-controlled (TPS=APS). Avoid any binary coast-to-idle
+    // gating from the EVT by keeping the controller in "island" and using continuous blending
+    // (traction shaping + generator ramps) instead.
+    updateMode: (ctx, prev) => alwaysIslandModeUpdate(ctx, prev),
     command: (ctx, mode) => bsfcIslandDirectCommand(ctx, mode),
   },
   direct: {
