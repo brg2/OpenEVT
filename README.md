@@ -1,5 +1,9 @@
 # OpenEVT — Electronic Variable Transmission Simulator
 
+## License
+
+Apache-2.0 (see `LICENSE`).
+
 ## Run
 
 ```bash
