@@ -7,6 +7,10 @@ export type EngineControlMode =
 export interface SimInputs {
   aps: number;
   tps: number;
+  cruiseEnabled: boolean;
+  cruiseMph: number;
+  // Multiplier for cruise response/ramp: 1.0 is default, 0.5 slower, 1.5 faster.
+  cruiseRamp: number;
   gradePct: number;
 }
 
@@ -135,6 +139,12 @@ export interface SimState {
   pEngAvailKw: number;
   pEngMechKw: number;
   fuelRateGph: number;
+  cruiseI: number;
+  cruiseAps: number;
+  cruiseSetMph: number;
+  cruiseEnabledPrev: boolean;
+  cruiseErrPrevMph: number;
+  cruiseDErrFilt: number;
   genDelayBuffer: number[];
   genDelaySteps: number;
   prevTps: number;

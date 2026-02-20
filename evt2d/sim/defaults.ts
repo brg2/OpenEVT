@@ -73,5 +73,8 @@ export const defaultConfig: SimConfig = {
 export const defaultInputs: SimInputs = {
   aps: 0.35,
   tps: 0.35,
+  cruiseEnabled: false,
+  cruiseMph: 0,
+  cruiseRamp: 1.0,
   gradePct: 0,
 };

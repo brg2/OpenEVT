@@ -555,8 +555,41 @@ const Controls: React.FC<ControlsProps> = ({
             value={inputs.aps}
             onChange={(e) => {
               const v = Number(e.target.value);
-              onInputs({ aps: v, tps: v });
+              onInputs({ aps: v, tps: v, cruiseEnabled: false });
             }}
+          />
+          <div className="control-row">
+            <label>Cruise (mph)</label>
+            <div className="footer-controls" style={{ gap: 8 }}>
+              <button
+                className={inputs.cruiseEnabled ? "primary" : "ghost"}
+                onClick={() => onInputs({ cruiseEnabled: !inputs.cruiseEnabled })}
+                title="Cruise control"
+              >
+                {inputs.cruiseEnabled ? "Cruise On" : "Cruise Off"}
+              </button>
+              <span>{Math.round(inputs.cruiseMph)}</span>
+            </div>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={inputs.cruiseMph}
+            onChange={(e) => onInputs({ cruiseMph: Number(e.target.value) })}
+          />
+          <div className="control-row">
+            <label>Cruise Ramp</label>
+            <span>{Math.round(inputs.cruiseRamp * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min={0.5}
+            max={1.5}
+            step={0.01}
+            value={inputs.cruiseRamp}
+            onChange={(e) => onInputs({ cruiseRamp: Number(e.target.value) })}
           />
         <div className="control-row">
           <label>Grade (%)</label>

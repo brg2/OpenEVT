@@ -13,6 +13,8 @@ const HISTORY_MAX = HISTORY_SECONDS * SAMPLE_RATE;
 const STORAGE_KEY = "openevt-2d-sim";
 const AUDIO_DEFAULT_VOLUME = 0.4;
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+const clampMph = (value: number) => Math.max(0, Math.min(100, value));
+const clampCruiseRamp = (value: number) => Math.max(0.5, Math.min(1.5, value));
 
 interface HistoryBuffer {
   t: number[];
@@ -255,7 +257,27 @@ const App: React.FC = () => {
             typeof parsed.inputs.aps === "number"
               ? parsed.inputs.aps
               : (typeof parsed.inputs.tps === "number" ? parsed.inputs.tps : defaultInputs.aps);
-          return { ...defaultInputs, ...parsed.inputs, aps: clamp01(aps), tps: clamp01(aps) };
+          const cruiseMph =
+            typeof parsed.inputs.cruiseMph === "number"
+              ? parsed.inputs.cruiseMph
+              : defaultInputs.cruiseMph;
+          const cruiseEnabled =
+            typeof parsed.inputs.cruiseEnabled === "boolean"
+              ? parsed.inputs.cruiseEnabled
+              : defaultInputs.cruiseEnabled;
+          const cruiseRamp =
+            typeof parsed.inputs.cruiseRamp === "number"
+              ? parsed.inputs.cruiseRamp
+              : defaultInputs.cruiseRamp;
+          return {
+            ...defaultInputs,
+            ...parsed.inputs,
+            aps: clamp01(aps),
+            tps: clamp01(aps),
+            cruiseEnabled,
+            cruiseMph: clampMph(cruiseMph),
+            cruiseRamp: clampCruiseRamp(cruiseRamp),
+          };
         }
       }
     } catch {
@@ -342,6 +364,15 @@ const App: React.FC = () => {
       if (data.type === "snapshot") {
         const nextState = data.state as SimState;
         setSimState(nextState);
+        // When cruise is enabled, mirror the controller's effective pedal back into the
+        // input slider so the UI reflects what the vehicle is actually doing.
+        setInputs((prev) => {
+          if (!prev.cruiseEnabled) return prev;
+          const v = clamp01(nextState.prevTps);
+          const next = { ...prev, aps: v, tps: v };
+          workerRef.current?.postMessage({ type: "setInputs", inputs: next });
+          return next;
+        });
         if (nextState.timeSec > lastHistoryTimeRef.current + 1e-6) {
           pushHistory(historyRef.current, nextState);
           lastHistoryTimeRef.current = nextState.timeSec;

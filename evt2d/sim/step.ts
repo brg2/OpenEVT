@@ -4,6 +4,7 @@ import { clamp, rpmShape } from "./utils";
 
 const V_EPS = 1.0;
 const RHO = 1.225;
+const MPS_TO_MPH = 2.2369362920544;
 
 const smoothstep = (edge0: number, edge1: number, x: number) => {
   if (edge0 === edge1) return x < edge0 ? 0 : 1;
@@ -46,6 +47,12 @@ export const createInitialState = (config: SimConfig): SimState => {
     pEngAvailKw: 0,
     pEngMechKw: 0,
     fuelRateGph: 0,
+    cruiseI: 0,
+    cruiseAps: 0,
+    cruiseSetMph: 0,
+    cruiseEnabledPrev: false,
+    cruiseErrPrevMph: 0,
+    cruiseDErrFilt: 0,
     genDelayBuffer: new Array(delaySteps).fill(0),
     genDelaySteps: delaySteps,
     prevTps: 0,
@@ -103,8 +110,103 @@ export const step = (
   const fRoll = vehicle.cr * vehicle.massKg * 9.81;
   const fGrade = vehicle.massKg * 9.81 * Math.sin(gradeRad);
 
-  // Pedal intent.
-  const aps = clamp(inputs.aps, 0, 1);
+  // Pedal intent (optionally overridden by cruise setpoint).
+  const manualAps = clamp(inputs.aps, 0, 1);
+  const cruiseEnabled = Boolean(inputs.cruiseEnabled);
+  const cruiseTargetRawMph = cruiseEnabled ? clamp(inputs.cruiseMph, 0, 100) : 0;
+  const aps = (() => {
+    if (cruiseTargetRawMph <= 0) {
+      next.cruiseI = 0;
+      next.cruiseAps = manualAps;
+      next.cruiseSetMph = 0;
+      next.cruiseEnabledPrev = false;
+      return manualAps;
+    }
+
+    // On enable, start from the current pedal to avoid a visible snap.
+    if (!state.cruiseEnabledPrev && cruiseEnabled) {
+      next.cruiseI = 0;
+      next.cruiseAps = manualAps;
+      next.cruiseSetMph = clamp(cruiseTargetRawMph, 0, 100);
+      next.cruiseErrPrevMph = 0;
+      next.cruiseDErrFilt = 0;
+    }
+
+    // Smooth the setpoint itself so dragging the cruise slider doesn't create an instant step.
+    const cruiseRamp = clamp(inputs.cruiseRamp, 0.5, 1.5);
+    const prevSetMph = clamp(state.cruiseSetMph, 0, 100);
+    // When lowering the cruise setpoint we generally want to avoid a big throttle dump that
+    // causes the vehicle to fall *below* the new target (no braking control here).
+    // So: ramp setpoint down slower than up.
+    const setUpRampMphPerS = 30 * cruiseRamp;
+    const setDownRampMphPerS = 15 * cruiseRamp;
+    const setMaxUp = setUpRampMphPerS * dt;
+    const setMaxDown = setDownRampMphPerS * dt;
+    const cruiseTargetMph = clamp(
+      cruiseTargetRawMph,
+      prevSetMph - setMaxDown,
+      prevSetMph + setMaxUp,
+    );
+    next.cruiseSetMph = cruiseTargetMph;
+    next.cruiseEnabledPrev = true;
+
+    // As we approach the setpoint, become less aggressive to reduce overshoot.
+    // Use a short lookahead based on current acceleration to start backing off early.
+    // Use a lightly filtered derivative of speed error for damping (less twitchy than aMps2 lookahead).
+    const vMph = v * MPS_TO_MPH;
+    const errMph = cruiseTargetMph - vMph;
+    const dErr = (errMph - state.cruiseErrPrevMph) / Math.max(1e-6, dt);
+    const dTau = 0.6 / clamp(inputs.cruiseRamp, 0.5, 1.5);
+    const dAlpha = dt / (dTau + dt);
+    const dErrFilt = state.cruiseDErrFilt + (dErr - state.cruiseDErrFilt) * dAlpha;
+    next.cruiseErrPrevMph = errMph;
+    next.cruiseDErrFilt = dErrFilt;
+
+    // Predictive error (short horizon) based on derivative, for earlier backing off.
+    const predSec = 1.2;
+    const errPredMph = errMph + dErrFilt * predSec;
+    const approachBandMph = 8;
+    const approach = smoothstep(0, approachBandMph, Math.abs(errPredMph)); // 0 near, 1 far
+
+    // Simple PI controller mapping speed error (mph) -> pedal [0..1].
+    // Tuned for stable behavior with the existing drivetrain model.
+    const approachGain = 0.2 + 0.8 * approach;
+    const kp = 0.02 * approachGain * cruiseRamp;
+    const ki = 0.004 * approachGain * cruiseRamp;
+    const kd = 0.006 * cruiseRamp;
+
+    // Integrate signed error with simple anti-windup so we can unwind when overspeed,
+    // and avoid the integrator "sticking" the pedal open above the setpoint.
+    let iNext = clamp(state.cruiseI, -300, 300);
+    const uUnsat = kp * errPredMph + ki * iNext - kd * dErrFilt;
+    const uSat = clamp(uUnsat, 0, 1);
+    const shouldIntegrate = !(
+      (uSat <= 1e-6 && errPredMph < 0) ||
+      (uSat >= 1 - 1e-6 && errPredMph > 0)
+    );
+    if (shouldIntegrate) iNext = clamp(iNext + errPredMph * dt, -300, 300);
+    next.cruiseI = iNext;
+
+    const desiredAps = clamp(kp * errPredMph + ki * iNext - kd * dErrFilt, 0, 1);
+
+    // Smoothly ramp pedal changes so adjusting the cruise setpoint doesn't "step" TPS.
+    // As we approach the target, slow both up/down ramps (but never to zero) to reduce overshoot.
+    // cruiseRamp scales overall responsiveness (0.5x..1.5x).
+    const baseApsPerS = 0.7 * cruiseRamp;
+    const rateScale = 0.25 + 0.75 * approach;
+    const upApsPerS = baseApsPerS * rateScale;
+    // When we are above the (ramped) setpoint, soften the down ramp further near the target
+    // so we don't dump power and undershoot on decel.
+    const loweringSetpoint = cruiseTargetRawMph < prevSetMph - 1e-6;
+    const downSoft = loweringSetpoint && errPredMph < 0 ? (0.15 + 0.85 * approach) : 1.0;
+    const downApsPerS = baseApsPerS * rateScale * downSoft;
+    const prevCruiseAps = clamp(state.cruiseAps, 0, 1);
+    const maxUp = upApsPerS * dt;
+    const maxDown = downApsPerS * dt;
+    const nextCruiseAps = clamp(desiredAps, prevCruiseAps - maxDown, prevCruiseAps + maxUp);
+    next.cruiseAps = nextCruiseAps;
+    return nextCruiseAps;
+  })();
   next.prevTps = aps;
 
   let pTracElecReqKw = 0;
